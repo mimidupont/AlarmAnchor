@@ -1,0 +1,135 @@
+.alarm-notification-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.alarm-notification {
+  background: white;
+  border-radius: 16px;
+  padding: 40px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(30px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.alarm-icon {
+  font-size: 60px;
+  margin-bottom: 16px;
+  animation: pulse 0.8s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.alarm-notification h1 {
+  font-size: 32px;
+  color: #ff4444;
+  margin-bottom: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.alarm-message {
+  font-size: 16px;
+  color: #333;
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+
+.alert-details {
+  background: #fff3cd;
+  border-left: 4px solid #ffc107;
+  padding: 16px;
+  border-radius: 6px;
+  margin-bottom: 24px;
+}
+
+.alert-details p {
+  color: #333;
+  font-size: 14px;
+  margin: 0;
+  font-weight: 500;
+}
+
+.acknowledge-btn {
+  width: 100%;
+  padding: 14px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ff4444 0%, #ff6666 100%);
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.acknowledge-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(255, 68, 68, 0.4);
+}
+
+.acknowledge-btn:active {
+  transform: translateY(0);
+}
+
+@media (max-width: 600px) {
+  .alarm-notification {
+    padding: 32px 24px;
+  }
+
+  .alarm-icon {
+    font-size: 48px;
+  }
+
+  .alarm-notification h1 {
+    font-size: 28px;
+  }
+
+  .alarm-message {
+    font-size: 14px;
+  }
+
+  .acknowledge-btn {
+    padding: 12px 20px;
+    font-size: 14px;
+  }
+}

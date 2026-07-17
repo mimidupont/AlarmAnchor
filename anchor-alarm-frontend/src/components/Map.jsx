@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
@@ -14,6 +14,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const [status, setStatus] = useState('Initializing GPS...');
 
   // Initialize map
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!mapContainer.current) return;
 
@@ -75,20 +76,20 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         map.current = null;
       }
     };
-  }, [handleDrawCreated, handleDrawEdited, handleDrawDeleted]);
+  }, []);
 
   // Handle draw creation
-  const handleDrawCreated = useCallback((e) => {
+  const handleDrawCreated = (e) => {
     const layer = e.layer;
     if (layer instanceof L.Polygon) {
       const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
       onZoneUpdate(coordinates);
       setStatus(`Zone created with ${coordinates.length} points`);
     }
-  }, [onZoneUpdate]);
+  };
 
   // Handle draw editing
-  const handleDrawEdited = useCallback((e) => {
+  const handleDrawEdited = (e) => {
     const layers = e.layers;
     layers.eachLayer((layer) => {
       if (layer instanceof L.Polygon) {
@@ -97,13 +98,13 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         setStatus(`Zone updated with ${coordinates.length} points`);
       }
     });
-  }, [onZoneUpdate]);
+  };
 
   // Handle draw deletion
-  const handleDrawDeleted = useCallback(() => {
+  const handleDrawDeleted = () => {
     onZoneUpdate([]);
     setStatus('Zone deleted');
-  }, [onZoneUpdate]);
+  };
 
   // Update zone visualization when zone changes
   useEffect(() => {

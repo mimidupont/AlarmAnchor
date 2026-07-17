@@ -11,7 +11,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000'
 export default function App() {
   const [view, setView] = useState('session'); // 'session', 'main', 'remote'
   const [sessionId, setSessionId] = useState(null);
-  const [role, setRole] = useState(null);
   const [socket, setSocket] = useState(null);
   const [zone, setZone] = useState([]);
   const [locations, setLocations] = useState({});
@@ -92,7 +91,6 @@ export default function App() {
     }
 
     setSessionId(sessionIdInput);
-    setRole(roleInput); // Used to track which mode the app is in
 
     socket.emit('join-session', {
       sessionId: sessionIdInput,

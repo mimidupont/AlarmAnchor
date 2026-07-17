@@ -92,7 +92,7 @@ export default function App() {
     }
 
     setSessionId(sessionIdInput);
-    setRole(roleInput);
+    setRole(roleInput); // Used to track which mode the app is in
 
     socket.emit('join-session', {
       sessionId: sessionIdInput,

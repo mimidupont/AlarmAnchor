@@ -84,6 +84,10 @@ export default function App() {
   }, []);
 
   // Handle session join
+  // NOTE: sessionIdInput is passed explicitly into startGpsTracking rather than
+  // relying on the sessionId state variable, because setSessionId() does not
+  // apply synchronously. Without this, the watchPosition callback created in
+  // startGpsTracking would close over a stale (null) sessionId forever.
   const handleJoinSession = (sessionIdInput, roleInput) => {
     if (!socket) {
       setError('Socket not connected yet, please wait...');
@@ -99,7 +103,7 @@ export default function App() {
 
     if (roleInput === 'main') {
       setView('main');
-      startGpsTracking();
+      startGpsTracking(sessionIdInput);
     } else {
       setView('remote');
     }
@@ -107,6 +111,20 @@ export default function App() {
 
   // Handle session creation
   const handleCreateSession = async () => {
+    // Fire a geolocation request synchronously, inside the click handler's
+    // call stack, before any await. iOS Safari only shows the location
+    // permission prompt when the request happens directly inside a user
+    // gesture — once we `await` something first, Safari silently declines
+    // to prompt at all (no error, just nothing). This "primes" permission
+    // immediately on tap; the real tracking starts later in startGpsTracking.
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        () => {},
+        (err) => console.warn('Initial GPS permission request failed:', err),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }
+
     try {
       const response = await fetch(`${BACKEND_URL}/api/sessions`, {
         method: 'POST'
@@ -119,7 +137,7 @@ export default function App() {
   };
 
   // Start GPS tracking
-  const startGpsTracking = () => {
+  const startGpsTracking = (currentSessionId) => {
     if (!navigator.geolocation) {
       setError('Geolocation not supported on this device');
       return;
@@ -135,7 +153,7 @@ export default function App() {
           timestamp: new Date().toISOString()
         };
 
-        if (socket && sessionId) {
+        if (socket && currentSessionId) {
           socket.emit('update-location', { location });
         }
       },

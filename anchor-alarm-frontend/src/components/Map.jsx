@@ -13,6 +13,34 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const zoneLayer = useRef(null);
   const [status, setStatus] = useState('Initializing GPS...');
 
+  // Handle draw creation
+  const handleDrawCreated = (e) => {
+    const layer = e.layer;
+    if (layer instanceof L.Polygon) {
+      const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
+      onZoneUpdate(coordinates);
+      setStatus(`Zone created with ${coordinates.length} points`);
+    }
+  };
+
+  // Handle draw editing
+  const handleDrawEdited = (e) => {
+    const layers = e.layers;
+    layers.eachLayer((layer) => {
+      if (layer instanceof L.Polygon) {
+        const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
+        onZoneUpdate(coordinates);
+        setStatus(`Zone updated with ${coordinates.length} points`);
+      }
+    });
+  };
+
+  // Handle draw deletion
+  const handleDrawDeleted = () => {
+    onZoneUpdate([]);
+    setStatus('Zone deleted');
+  };
+
   // Initialize map
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -77,34 +105,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       }
     };
   }, []);
-
-  // Handle draw creation
-  const handleDrawCreated = (e) => {
-    const layer = e.layer;
-    if (layer instanceof L.Polygon) {
-      const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
-      onZoneUpdate(coordinates);
-      setStatus(`Zone created with ${coordinates.length} points`);
-    }
-  };
-
-  // Handle draw editing
-  const handleDrawEdited = (e) => {
-    const layers = e.layers;
-    layers.eachLayer((layer) => {
-      if (layer instanceof L.Polygon) {
-        const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
-        onZoneUpdate(coordinates);
-        setStatus(`Zone updated with ${coordinates.length} points`);
-      }
-    });
-  };
-
-  // Handle draw deletion
-  const handleDrawDeleted = () => {
-    onZoneUpdate([]);
-    setStatus('Zone deleted');
-  };
 
   // Update zone visualization when zone changes
   useEffect(() => {

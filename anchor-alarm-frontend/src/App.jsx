@@ -249,7 +249,6 @@ export default function App() {
             }
             setView('session');
             setSessionId(null);
-            setRole(null);
             setZone([]);
             setLocations({});
           }}
@@ -264,7 +263,6 @@ export default function App() {
           onBack={() => {
             setView('session');
             setSessionId(null);
-            setRole(null);
             setZone([]);
             setLocations({});
           }}

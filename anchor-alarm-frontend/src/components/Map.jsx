@@ -5,6 +5,8 @@ import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import './Map.css';
 
+/* eslint-disable react-hooks/exhaustive-deps */
+
 export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack }) {
   const mapContainer = useRef(null);
   const map = useRef(null);

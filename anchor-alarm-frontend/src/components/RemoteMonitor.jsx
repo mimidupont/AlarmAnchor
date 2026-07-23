@@ -8,12 +8,11 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   const map = useRef(null);
   const boatMarker = useRef(null);
   const zoneLayer = useRef(null);
+  const accuracyCircle = useRef(null);
+  const hasCenteredOnce = useRef(false);
 
-  // Initialize map
   useEffect(() => {
     if (!mapContainer.current) return;
-
-    // Prevent double initialization
     if (map.current) return;
 
     map.current = L.map(mapContainer.current).setView([48.8566, 2.3522], 13);
@@ -53,6 +52,9 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   }, [zone]);
 
   // Update boat position
+  // NOTE: setView() resets zoom, so it only runs on the FIRST GPS fix.
+  // Subsequent updates use panTo() so a user's manual zoom isn't wiped
+  // out every ~10s GPS tick.
   useEffect(() => {
     if (!map.current || !locations) return;
 
@@ -73,12 +75,19 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
           popupAnchor: [0, -16]
         })
       }).addTo(map.current)
-        .bindPopup(`📍 Boat Position<br/>Accuracy: ${Math.round(accuracy)}m`)
-        .openPopup();
+        .bindPopup(`📍 Boat Position<br/>Accuracy: ${Math.round(accuracy)}m`);
 
-      map.current.setView([latitude, longitude], 14);
+      if (!hasCenteredOnce.current) {
+        map.current.setView([latitude, longitude], 14);
+        hasCenteredOnce.current = true;
+      } else {
+        map.current.panTo([latitude, longitude]);
+      }
 
-      L.circle([latitude, longitude], {
+      if (accuracyCircle.current) {
+        map.current.removeLayer(accuracyCircle.current);
+      }
+      accuracyCircle.current = L.circle([latitude, longitude], {
         radius: accuracy,
         color: '#3388ff',
         weight: 1,

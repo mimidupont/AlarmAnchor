@@ -8,6 +8,10 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   const map = useRef(null);
   const boatMarker = useRef(null);
   const zoneLayer = useRef(null);
+  // Tracks whether we've already done the initial auto-center/zoom on the
+  // boat's first GPS fix. After that we only pan (never force zoom) so the
+  // user's manual zoom/pan isn't reset every time a new location arrives.
+  const hasCenteredMap = useRef(false);
 
   // Initialize map
   useEffect(() => {
@@ -76,7 +80,16 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
         .bindPopup(`📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`)
         .openPopup();
 
-      map.current.setView([latitude, longitude], 14);
+      // Only auto-center + set zoom the very first time we get a GPS fix.
+      // Subsequent updates just re-center (panTo) without changing zoom,
+      // so the map doesn't snap back to zoom 14 every ~10 seconds and
+      // undo the user's manual zooming.
+      if (!hasCenteredMap.current) {
+        map.current.setView([latitude, longitude], 14);
+        hasCenteredMap.current = true;
+      } else {
+        map.current.panTo([latitude, longitude]);
+      }
 
       L.circle([latitude, longitude], {
         radius: accuracy,

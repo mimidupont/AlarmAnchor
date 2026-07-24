@@ -36,6 +36,12 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const map = useRef(null);
   const drawnItems = useRef(null);
   const boatMarker = useRef(null);
+  // Tracks whether we've already done the initial auto-center/zoom on the
+  // boat's first GPS fix. After that, we only pan the map (never force the
+  // zoom level) so the user's manual zoom/pan isn't reset on every GPS
+  // update (previously setView(..., 14) ran on every location update,
+  // which fought any zoom the user just did).
+  const hasCenteredMap = useRef(false);
   const [status, setStatus] = useState('Initialisation du GPS...');
 
   // Handle draw creation
@@ -182,8 +188,16 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         .bindPopup(`📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`)
         .openPopup();
 
-      // Center map on boat
-      map.current.setView([latitude, longitude], 14);
+      // Only auto-center + set zoom the very first time we get a GPS fix.
+      // On every subsequent update just re-center (panTo) without touching
+      // the zoom level, so the user is free to zoom in/out on the boat
+      // without it snapping back to zoom 14 every ~10 seconds.
+      if (!hasCenteredMap.current) {
+        map.current.setView([latitude, longitude], 14);
+        hasCenteredMap.current = true;
+      } else {
+        map.current.panTo([latitude, longitude]);
+      }
 
       // Draw accuracy circle
       L.circle([latitude, longitude], {

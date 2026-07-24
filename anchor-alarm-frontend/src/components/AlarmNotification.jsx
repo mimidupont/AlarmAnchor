@@ -24,15 +24,15 @@ export default function AlarmNotification({ onAcknowledge }) {
     <div className="alarm-notification-overlay">
       <div className="alarm-notification">
         <div className="alarm-icon">🚨</div>
-        <h1>ANCHOR ALARM!</h1>
+        <h1>ALARME MOUILLAGE !</h1>
         <p className="alarm-message">
-          Your boat has drifted outside the anchor zone!
+          Votre bateau a dérivé hors de la zone de mouillage !
         </p>
         <div className="alert-details">
-          <p>⚠️ Immediate attention required</p>
+          <p>⚠️ Attention immédiate requise</p>
         </div>
         <button onClick={handleAcknowledge} className="acknowledge-btn">
-          Acknowledge Alarm
+          Acquitter l'alarme
         </button>
       </div>
     </div>

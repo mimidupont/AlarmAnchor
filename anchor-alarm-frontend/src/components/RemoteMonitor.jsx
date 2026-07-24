@@ -8,17 +8,18 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   const map = useRef(null);
   const boatMarker = useRef(null);
   const zoneLayer = useRef(null);
-  const accuracyCircle = useRef(null);
-  const hasCenteredOnce = useRef(false);
 
+  // Initialize map
   useEffect(() => {
     if (!mapContainer.current) return;
+
+    // Prevent double initialization
     if (map.current) return;
 
     map.current = L.map(mapContainer.current).setView([48.8566, 2.3522], 13);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
+      attribution: '© contributeurs OpenStreetMap',
       maxZoom: 19
     }).addTo(map.current);
 
@@ -52,9 +53,6 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   }, [zone]);
 
   // Update boat position
-  // NOTE: setView() resets zoom, so it only runs on the FIRST GPS fix.
-  // Subsequent updates use panTo() so a user's manual zoom isn't wiped
-  // out every ~10s GPS tick.
   useEffect(() => {
     if (!map.current || !locations) return;
 
@@ -75,19 +73,12 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
           popupAnchor: [0, -16]
         })
       }).addTo(map.current)
-        .bindPopup(`📍 Boat Position<br/>Accuracy: ${Math.round(accuracy)}m`);
+        .bindPopup(`📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`)
+        .openPopup();
 
-      if (!hasCenteredOnce.current) {
-        map.current.setView([latitude, longitude], 14);
-        hasCenteredOnce.current = true;
-      } else {
-        map.current.panTo([latitude, longitude]);
-      }
+      map.current.setView([latitude, longitude], 14);
 
-      if (accuracyCircle.current) {
-        map.current.removeLayer(accuracyCircle.current);
-      }
-      accuracyCircle.current = L.circle([latitude, longitude], {
+      L.circle([latitude, longitude], {
         radius: accuracy,
         color: '#3388ff',
         weight: 1,
@@ -103,36 +94,36 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
     <div className="remote-monitor">
       <div className="monitor-header">
         <div className="header-left">
-          <button onClick={onBack} className="back-btn">← Back</button>
-          <h2>Remote Monitor</h2>
+          <button onClick={onBack} className="back-btn">← Retour</button>
+          <h2>Suivi à distance</h2>
         </div>
         <div className="session-badge">
-          Session: <code>{sessionId}</code>
+          Session : <code>{sessionId}</code>
         </div>
       </div>
 
       {boatLocation ? (
         <div className="boat-info">
           <div className="info-item">
-            <span className="label">Position:</span>
+            <span className="label">Position :</span>
             <span className="value">
               {boatLocation.latitude.toFixed(4)}°, {boatLocation.longitude.toFixed(4)}°
             </span>
           </div>
           <div className="info-item">
-            <span className="label">Accuracy:</span>
-            <span className="value">{Math.round(boatLocation.accuracy)}m</span>
+            <span className="label">Précision :</span>
+            <span className="value">{Math.round(boatLocation.accuracy)} m</span>
           </div>
           <div className="info-item">
-            <span className="label">Last Update:</span>
+            <span className="label">Dernière mise à jour :</span>
             <span className="value">
-              {new Date(boatLocation.timestamp).toLocaleTimeString()}
+              {new Date(boatLocation.timestamp).toLocaleTimeString('fr-FR')}
             </span>
           </div>
         </div>
       ) : (
         <div className="boat-info">
-          <p className="waiting">Waiting for boat position...</p>
+          <p className="waiting">En attente de la position du bateau...</p>
         </div>
       )}
 
@@ -141,11 +132,11 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
       <div className="legend">
         <div className="legend-item">
           <span className="legend-color" style={{ background: '#ff4444' }}></span>
-          Boat Position
+          Position du bateau
         </div>
         <div className="legend-item">
           <span className="legend-color" style={{ background: 'rgba(255, 120, 0, 0.15)', border: '2px dashed #ff7800' }}></span>
-          Anchor Zone
+          Zone de mouillage
         </div>
       </div>
     </div>

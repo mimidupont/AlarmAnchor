@@ -30,16 +30,16 @@ export default function App() {
     });
 
     newSocket.on('connect', () => {
-      console.log('Connected to backend');
+      console.log('Connecté au serveur');
       setError(null);
     });
 
     newSocket.on('disconnect', () => {
-      console.log('Disconnected from backend');
+      console.log('Déconnecté du serveur');
     });
 
     newSocket.on('error', (errorMsg) => {
-      console.error('Socket error:', errorMsg);
+      console.error('Erreur socket :', errorMsg);
       setError(errorMsg);
     });
 
@@ -90,7 +90,7 @@ export default function App() {
   // startGpsTracking would close over a stale (null) sessionId forever.
   const handleJoinSession = (sessionIdInput, roleInput) => {
     if (!socket) {
-      setError('Socket not connected yet, please wait...');
+      setError('Connexion en cours, veuillez patienter...');
       return;
     }
 
@@ -120,7 +120,7 @@ export default function App() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         () => {},
-        (err) => console.warn('Initial GPS permission request failed:', err),
+        (err) => console.warn('Échec de la demande initiale de permission GPS :', err),
         { enableHighAccuracy: true, timeout: 10000 }
       );
     }
@@ -132,14 +132,14 @@ export default function App() {
       const data = await response.json();
       handleJoinSession(data.sessionId, 'main');
     } catch (err) {
-      setError('Failed to create session: ' + err.message);
+      setError('Échec de la création de la session : ' + err.message);
     }
   };
 
   // Start GPS tracking
   const startGpsTracking = (currentSessionId) => {
     if (!navigator.geolocation) {
-      setError('Geolocation not supported on this device');
+      setError("La géolocalisation n'est pas prise en charge sur cet appareil");
       return;
     }
 
@@ -158,8 +158,8 @@ export default function App() {
         }
       },
       (error) => {
-        console.error('GPS error:', error);
-        setError('GPS Error: ' + error.message);
+        console.error('Erreur GPS :', error);
+        setError('Erreur GPS : ' + error.message);
       },
       {
         enableHighAccuracy: true,
@@ -181,13 +181,13 @@ export default function App() {
   const triggerAlarm = () => {
     // Play sound
     if (alarmAudioRef.current) {
-      alarmAudioRef.current.play().catch(err => console.warn('Could not play audio:', err));
+      alarmAudioRef.current.play().catch(err => console.warn('Impossible de jouer le son :', err));
     }
 
     // Browser notification
     if (Notification.permission === 'granted') {
-      new Notification('⚠️ ANCHOR ALARM', {
-        body: 'Boat has drifted outside anchor zone!',
+      new Notification('⚠️ ALARME MOUILLAGE', {
+        body: 'Le bateau a dérivé hors de la zone de mouillage !',
         icon: '🚨',
         tag: 'anchor-alarm',
         requireInteraction: true

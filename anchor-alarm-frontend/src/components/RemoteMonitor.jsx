@@ -3,14 +3,28 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './RemoteMonitor.css';
 
+const BOAT_ICON = L.icon({
+  iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSI2IiBmaWxsPSIjRkY0NDQ0IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMiIvPjwvc3ZnPgo=',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+  popupAnchor: [0, -16]
+});
+
 export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
-  const boatMarker = useRef(null);
   const zoneLayer = useRef(null);
-  // Tracks whether we've already done the initial auto-center/zoom on the
-  // boat's first GPS fix. After that we only pan (never force zoom) so the
-  // user's manual zoom/pan isn't reset every time a new location arrives.
+  // A single persistent marker + accuracy circle that we move/resize in
+  // place on every GPS update, instead of removing and re-adding them.
+  // Recreating the marker every ~10s meant its popup re-opened each time,
+  // and Leaflet's popup auto-pan would nudge the view back toward the
+  // boat — which is what looked like the map "zooming back out" whenever
+  // you tried to zoom in manually. Likewise the old accuracy circle was
+  // never removed, so circles piled up on top of each other.
+  const boatMarker = useRef(null);
+  const accuracyCircle = useRef(null);
+  // We only ever auto-center/zoom the map once, on the very first GPS fix.
+  // After that we leave the user's pan/zoom completely alone.
   const hasCenteredMap = useRef(false);
 
   // Initialize map
@@ -32,6 +46,12 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
         map.current.remove();
         map.current = null;
       }
+      // Reset per-map refs so a remount (e.g. React StrictMode's extra
+      // mount/unmount cycle in dev) starts clean instead of holding on to
+      // layers that belonged to a destroyed map instance.
+      boatMarker.current = null;
+      accuracyCircle.current = null;
+      hasCenteredMap.current = false;
     };
   }, []);
 
@@ -61,43 +81,45 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
     if (!map.current || !locations) return;
 
     const currentLocation = Object.values(locations)[0];
+    if (!currentLocation) return;
 
-    if (currentLocation) {
-      const { latitude, longitude, accuracy } = currentLocation;
+    const { latitude, longitude, accuracy } = currentLocation;
+    const latlng = [latitude, longitude];
+    const popupText = `📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`;
 
-      if (boatMarker.current) {
-        map.current.removeLayer(boatMarker.current);
-      }
+    // Move the existing marker instead of destroying/recreating it. This
+    // avoids re-triggering the popup's open animation (and its auto-pan)
+    // on every update.
+    if (!boatMarker.current) {
+      boatMarker.current = L.marker(latlng, { icon: BOAT_ICON })
+        .addTo(map.current)
+        .bindPopup(popupText);
+    } else {
+      boatMarker.current.setLatLng(latlng);
+      boatMarker.current.setPopupContent(popupText);
+    }
 
-      boatMarker.current = L.marker([latitude, longitude], {
-        icon: L.icon({
-          iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSI2IiBmaWxsPSIjRkY0NDQ0IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMiIvPjwvc3ZnPgo=',
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
-          popupAnchor: [0, -16]
-        })
-      }).addTo(map.current)
-        .bindPopup(`📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`)
-        .openPopup();
-
-      // Only auto-center + set zoom the very first time we get a GPS fix.
-      // Subsequent updates just re-center (panTo) without changing zoom,
-      // so the map doesn't snap back to zoom 14 every ~10 seconds and
-      // undo the user's manual zooming.
-      if (!hasCenteredMap.current) {
-        map.current.setView([latitude, longitude], 14);
-        hasCenteredMap.current = true;
-      } else {
-        map.current.panTo([latitude, longitude]);
-      }
-
-      L.circle([latitude, longitude], {
+    // Resize/move the single accuracy circle instead of stacking a new
+    // one on top every update.
+    if (!accuracyCircle.current) {
+      accuracyCircle.current = L.circle(latlng, {
         radius: accuracy,
         color: '#3388ff',
         weight: 1,
         opacity: 0.3,
         fillOpacity: 0.05
       }).addTo(map.current);
+    } else {
+      accuracyCircle.current.setLatLng(latlng);
+      accuracyCircle.current.setRadius(accuracy);
+    }
+
+    // Only touch the map's view (center + zoom) on the very first fix.
+    // After that, the user has full control of pan/zoom forever.
+    if (!hasCenteredMap.current) {
+      map.current.setView(latlng, 14);
+      boatMarker.current.openPopup();
+      hasCenteredMap.current = true;
     }
   }, [locations]);
 

@@ -8,22 +8,17 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   const map = useRef(null);
   const boatMarker = useRef(null);
   const zoneLayer = useRef(null);
-  // Tracks whether we've already done the initial auto-center/zoom on the
-  // boat's first GPS fix. After that we only pan (never force zoom) so the
-  // user's manual zoom/pan isn't reset every time a new location arrives.
-  const hasCenteredMap = useRef(false);
+  const accuracyCircle = useRef(null);
+  const hasCenteredOnce = useRef(false);
 
-  // Initialize map
   useEffect(() => {
     if (!mapContainer.current) return;
-
-    // Prevent double initialization
     if (map.current) return;
 
     map.current = L.map(mapContainer.current).setView([48.8566, 2.3522], 13);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© contributeurs OpenStreetMap',
+      attribution: '© OpenStreetMap contributors',
       maxZoom: 19
     }).addTo(map.current);
 
@@ -57,6 +52,9 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   }, [zone]);
 
   // Update boat position
+  // NOTE: setView() resets zoom, so it only runs on the FIRST GPS fix.
+  // Subsequent updates use panTo() so a user's manual zoom isn't wiped
+  // out every ~10s GPS tick.
   useEffect(() => {
     if (!map.current || !locations) return;
 
@@ -77,21 +75,19 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
           popupAnchor: [0, -16]
         })
       }).addTo(map.current)
-        .bindPopup(`📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`)
-        .openPopup();
+        .bindPopup(`📍 Boat Position<br/>Accuracy: ${Math.round(accuracy)}m`);
 
-      // Only auto-center + set zoom the very first time we get a GPS fix.
-      // Subsequent updates just re-center (panTo) without changing zoom,
-      // so the map doesn't snap back to zoom 14 every ~10 seconds and
-      // undo the user's manual zooming.
-      if (!hasCenteredMap.current) {
+      if (!hasCenteredOnce.current) {
         map.current.setView([latitude, longitude], 14);
-        hasCenteredMap.current = true;
+        hasCenteredOnce.current = true;
       } else {
         map.current.panTo([latitude, longitude]);
       }
 
-      L.circle([latitude, longitude], {
+      if (accuracyCircle.current) {
+        map.current.removeLayer(accuracyCircle.current);
+      }
+      accuracyCircle.current = L.circle([latitude, longitude], {
         radius: accuracy,
         color: '#3388ff',
         weight: 1,
@@ -107,36 +103,36 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
     <div className="remote-monitor">
       <div className="monitor-header">
         <div className="header-left">
-          <button onClick={onBack} className="back-btn">← Retour</button>
-          <h2>Suivi à distance</h2>
+          <button onClick={onBack} className="back-btn">← Back</button>
+          <h2>Remote Monitor</h2>
         </div>
         <div className="session-badge">
-          Session : <code>{sessionId}</code>
+          Session: <code>{sessionId}</code>
         </div>
       </div>
 
       {boatLocation ? (
         <div className="boat-info">
           <div className="info-item">
-            <span className="label">Position :</span>
+            <span className="label">Position:</span>
             <span className="value">
               {boatLocation.latitude.toFixed(4)}°, {boatLocation.longitude.toFixed(4)}°
             </span>
           </div>
           <div className="info-item">
-            <span className="label">Précision :</span>
-            <span className="value">{Math.round(boatLocation.accuracy)} m</span>
+            <span className="label">Accuracy:</span>
+            <span className="value">{Math.round(boatLocation.accuracy)}m</span>
           </div>
           <div className="info-item">
-            <span className="label">Dernière mise à jour :</span>
+            <span className="label">Last Update:</span>
             <span className="value">
-              {new Date(boatLocation.timestamp).toLocaleTimeString('fr-FR')}
+              {new Date(boatLocation.timestamp).toLocaleTimeString()}
             </span>
           </div>
         </div>
       ) : (
         <div className="boat-info">
-          <p className="waiting">En attente de la position du bateau...</p>
+          <p className="waiting">Waiting for boat position...</p>
         </div>
       )}
 
@@ -145,11 +141,11 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
       <div className="legend">
         <div className="legend-item">
           <span className="legend-color" style={{ background: '#ff4444' }}></span>
-          Position du bateau
+          Boat Position
         </div>
         <div className="legend-item">
           <span className="legend-color" style={{ background: 'rgba(255, 120, 0, 0.15)', border: '2px dashed #ff7800' }}></span>
-          Zone de mouillage
+          Anchor Zone
         </div>
       </div>
     </div>

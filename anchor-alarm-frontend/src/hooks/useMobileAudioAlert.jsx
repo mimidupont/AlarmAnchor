@@ -281,10 +281,9 @@ export const useMobileAudioAlert = (config = {}) => {
       console.log('🚨 Alarm triggered for:', boatData);
 
       // 1. Play audio beeps
-      let audioSuccess = false;
       if (status.supportedFeatures.webAudio) {
         for (let i = 0; i < defaultConfig.repeatCount; i++) {
-          audioSuccess = await playBeep();
+          await playBeep();
           
           if (i < defaultConfig.repeatCount - 1) {
             await new Promise(resolve => setTimeout(resolve, defaultConfig.repeatDelay));

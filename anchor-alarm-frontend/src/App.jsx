@@ -35,7 +35,6 @@ export default function App() {
     triggerAlarm: playAlarm,
     stopAlarm,
     requestPermission,
-    status: alarmStatus,
     testAlarm
   } = useMobileAudioAlert({
     frequency: 1000,
@@ -113,12 +112,13 @@ export default function App() {
 
     setSocket(newSocket);
 
-    return () => {
+return () => {
       if (gpsWatchId.current) {
         navigator.geolocation.clearWatch(gpsWatchId.current);
       }
       newSocket.close();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Trigger alarm with boat data

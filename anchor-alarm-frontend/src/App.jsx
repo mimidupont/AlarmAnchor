@@ -14,7 +14,9 @@ import Map from './components/Map';
 import SessionManager from './components/SessionManager';
 import RemoteMonitor from './components/RemoteMonitor';
 import AlarmNotification from './components/AlarmNotification';
-import useMobileAudioAlert, { AlarmStatusIndicator } from './hooks/useMobileAudioAlert';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { Geolocation } from '@capacitor/geolocation';
 import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
@@ -30,31 +32,21 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(false);
   const gpsWatchId = useRef(null);
   
-  // Initialize mobile audio alert system
-  const {
-    triggerAlarm: playAlarm,
-    stopAlarm,
-    requestPermission,
-    testAlarm
-  } = useMobileAudioAlert({
-    frequency: 1000,
-    volume: 0.4,
-    repeatCount: 3,
-    repeatDelay: 600
-  });
-
-  // Register Service Worker on mount
+// Create the native notification channel (Android 8+ requires this)
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/service-worker.js')
-        .then(registration => {
-          console.log('✅ Service Worker registered:', registration);
-        })
-        .catch(err => {
-          console.warn('⚠️ Service Worker registration failed:', err);
-        });
-    }
+    LocalNotifications.createChannel({
+      id: 'anchor-alarm',
+      name: 'Anchor Alarm',
+      importance: 5,
+      sound: 'alarm.mp3',
+      vibration: true,
+      lights: true
+    }).catch(err => console.warn('Channel creation failed:', err));
   }, []);
+
+  const stopAlarm = async () => {
+    await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
+  };
 
   // Initialize Socket.io connection
   useEffect(() => {
@@ -114,38 +106,43 @@ export default function App() {
 
 return () => {
       if (gpsWatchId.current) {
-        navigator.geolocation.clearWatch(gpsWatchId.current);
+        Geolocation.clearWatch.removeWatcher({ id: gpsWatchId.current });
       }
       newSocket.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Trigger alarm with boat data
+// Trigger alarm with boat data
   const triggerAlarmSequence = async () => {
     const boatLocation = Object.values(locations)[0];
-    
-    const boatData = {
-      name: 'Your Boat',
-      location: boatLocation 
-        ? `Lat: ${boatLocation.latitude.toFixed(4)}, Lng: ${boatLocation.longitude.toFixed(4)}`
-        : 'Unknown Location',
-      coordinates: boatLocation,
-      timestamp: new Date().toISOString()
-    };
+    const locationText = boatLocation
+      ? `Lat: ${boatLocation.latitude.toFixed(4)}, Lng: ${boatLocation.longitude.toFixed(4)}`
+      : 'Unknown location';
 
-    const success = await playAlarm(boatData);
-    
-    if (!success) {
-      console.warn('⚠️ Audio alert failed, trying fallback');
-      // Show more visible notification as fallback
-      if (Notification.permission === 'granted') {
-        new Notification('🚨 BOAT ALARM', {
-          body: 'Your boat has left the anchor zone! Tap to open app.',
-          requireInteraction: true,
-          tag: 'anchor-alarm'
-        });
+    try {
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: 1,
+          title: '🚨 ANCHOR ALARM',
+          body: `Your boat has left the anchor zone! ${locationText}`,
+          sound: 'alarm.mp3',
+          ongoing: true,
+          autoCancel: false,
+          channelId: 'anchor-alarm'
+        }]
+      });
+    } catch (err) {
+      console.error('Notification failed:', err);
+    }
+
+    try {
+      for (let i = 0; i < 5; i++) {
+        await Haptics.impact({ style: ImpactStyle.Heavy });
+        await new Promise(r => setTimeout(r, 400));
       }
+    } catch (err) {
+      console.warn('Haptics failed:', err);
     }
   };
 
@@ -184,8 +181,8 @@ return () => {
 
     // Request notification permission (must be in user gesture)
     try {
-      const hasPermission = await requestPermission();
-      if (!hasPermission) {
+      const permStatus = await LocalNotifications.requestPermissions();
+      if (permStatus.display !== 'granted') {
         console.warn('⚠️ Notification permission not granted. Alarms may not work.');
       }
     } catch (err) {
@@ -204,37 +201,45 @@ return () => {
     }
   };
 
-  // Start GPS tracking
-  const startGpsTracking = (currentSessionId) => {
-    if (!navigator.geolocation) {
-      setError('Geolocation not supported on this device');
-      return;
-    }
-
-    gpsWatchId.current = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        const location = {
-          latitude,
-          longitude,
-          accuracy,
-          timestamp: new Date().toISOString()
-        };
-
-        if (socket && currentSessionId) {
-          socket.emit('update-location', { location });
-        }
-      },
-      (error) => {
-        console.error('❌ GPS Error:', error);
-        setError(`GPS error: ${error.message}`);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
+// Start GPS tracking (native, foreground-priority)
+  const startGpsTracking = async (currentSessionId) => {
+    try {
+      const permStatus = await Geolocation.requestPermissions();
+      if (permStatus.location !== 'granted') {
+        setError('Location permission was not granted');
+        return;
       }
-    );
+
+      const watcherId = await Geolocation.watchPosition(
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        },
+        (position, err) => {
+          if (err) {
+            console.error('❌ GPS Error:', err);
+            setError(`GPS error: ${err.message}`);
+            return;
+          }
+          if (position && socket && currentSessionId) {
+            const { latitude, longitude, accuracy } = position.coords;
+            socket.emit('update-location', {
+              location: {
+                latitude,
+                longitude,
+                accuracy,
+                timestamp: new Date().toISOString()
+              }
+            });
+          }
+        }
+      );
+      gpsWatchId.current = watcherId;
+    } catch (err) {
+      console.error('Failed to start GPS tracking:', err);
+      setError(`GPS error: ${err.message}`);
+    }
   };
 
   // Handle zone update
@@ -280,20 +285,16 @@ return () => {
           borderRadius: '5px',
           fontSize: '10px',
           fontFamily: 'monospace',
-          zIndex: 9999,
-          maxWidth: '300px',
-          maxHeight: '200px',
-          overflow: 'auto'
+          zIndex: 9999
         }}>
-          <div>Alarm System Status:</div>
-          <AlarmStatusIndicator />
-          <button 
-            onClick={testAlarm}
+          <div>Alarm System Status: Native (Capacitor)</div>
+          <button
+            onClick={triggerAlarmSequence}
             style={{ marginTop: '8px', padding: '4px' }}
           >
             Test Alarm
           </button>
-          <button 
+          <button
             onClick={() => setShowDebug(false)}
             style={{ marginLeft: '4px', padding: '4px' }}
           >
@@ -337,7 +338,7 @@ return () => {
           role="main"
           onBack={() => {
             if (gpsWatchId.current) {
-              navigator.geolocation.clearWatch(gpsWatchId.current);
+              Geolocation.clearWatch({ id: gpsWatchId.current });
             }
             stopAlarm();
             setView('session');

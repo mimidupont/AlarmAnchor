@@ -4,11 +4,17 @@
   "description": "Real-time boat anchor alarm monitoring app",
   "private": true,
   "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/geolocation": "^8.2.0",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/local-notifications": "^8.2.1",
+    "leaflet": "^1.9.4",
+    "leaflet-draw": "^1.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "socket.io-client": "^4.5.4",
-    "leaflet": "^1.9.4",
-    "leaflet-draw": "^1.0.4"
+    "socket.io-client": "^4.5.4"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -34,6 +40,7 @@
     ]
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
     "react-scripts": "5.0.1"
   },
   "proxy": "http://localhost:5000"

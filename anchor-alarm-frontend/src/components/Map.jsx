@@ -3,6 +3,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
+import useAnchorRadius from '../hooks/useAnchorRadius';
+import { distanceMeters, bearingDegrees, bearingToCompass } from '../utils/geo';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
@@ -38,7 +40,18 @@ const BOAT_ICON = L.icon({
   popupAnchor: [0, -16]
 });
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack }) {
+const ANCHOR_ICON = L.divIcon({
+  className: 'anchor-marker',
+  html: '⚓',
+  iconSize: [30, 30],
+  iconAnchor: [15, 15],
+  popupAnchor: [0, -15]
+});
+
+// Default scope: middle of the common 15-35m chain range.
+const DEFAULT_ANCHOR_RADIUS = 25;
+
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -51,11 +64,18 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // never removed, so circles piled up on top of each other.
   const boatMarker = useRef(null);
   const accuracyCircle = useRef(null);
+  const anchorMarker = useRef(null);
+  const anchorLine = useRef(null);
   // We only ever auto-center/zoom the map once, on the very first GPS fix.
   // After that we leave the user's pan/zoom completely alone — the marker
   // still moves, but the map view is never touched again automatically.
   const hasCenteredMap = useRef(false);
   const [status, setStatus] = useState('Initialisation du GPS...');
+  const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
+  const [radiusEditable, setRadiusEditable] = useState(false);
+
+  // Draws the (optionally draggable) radius circle around the anchor.
+  useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, radiusEditable);
 
   // Handle draw creation
   // NOTE: the created layer is now added to `drawnItems` (the FeatureGroup
@@ -170,6 +190,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       boatMarker.current = null;
       accuracyCircle.current = null;
       hasCenteredMap.current = false;
+      anchorMarker.current = null;
+      anchorLine.current = null;
     };
   }, []);
 
@@ -234,6 +256,92 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     setStatus(`📍 Suivi en cours : ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
   }, [locations]);
 
+  // Update anchor marker + chain line to the boat
+  useEffect(() => {
+    if (!map.current) return;
+
+    if (!anchor) {
+      if (anchorMarker.current) {
+        map.current.removeLayer(anchorMarker.current);
+        anchorMarker.current = null;
+      }
+      if (anchorLine.current) {
+        map.current.removeLayer(anchorLine.current);
+        anchorLine.current = null;
+      }
+      return;
+    }
+
+    const anchorLatLng = [anchor.latitude, anchor.longitude];
+    const popupText = `⚓ Position de l'ancre${
+      anchor.accuracy ? `<br/>Précision : ${Math.round(anchor.accuracy)} m` : ''
+    }`;
+
+    if (!anchorMarker.current) {
+      anchorMarker.current = L.marker(anchorLatLng, { icon: ANCHOR_ICON })
+        .addTo(map.current)
+        .bindPopup(popupText);
+    } else {
+      anchorMarker.current.setLatLng(anchorLatLng);
+      anchorMarker.current.setPopupContent(popupText);
+    }
+
+    const boatLocation = locations ? Object.values(locations)[0] : null;
+    if (boatLocation) {
+      const boatLatLng = [boatLocation.latitude, boatLocation.longitude];
+      if (!anchorLine.current) {
+        anchorLine.current = L.polyline([anchorLatLng, boatLatLng], {
+          color: '#8e44ad',
+          weight: 2,
+          dashArray: '4, 6',
+          opacity: 0.7
+        }).addTo(map.current);
+      } else {
+        anchorLine.current.setLatLngs([anchorLatLng, boatLatLng]);
+      }
+    } else if (anchorLine.current) {
+      map.current.removeLayer(anchorLine.current);
+      anchorLine.current = null;
+    }
+  }, [anchor, locations]);
+
+  // Drop anchor, then immediately open the radius editor so the scope
+  // (chain length) can be adjusted before confirming the alarm zone.
+  const handleDropAnchorClick = async () => {
+    await onDropAnchor();
+    setAnchorRadius(DEFAULT_ANCHOR_RADIUS);
+    setRadiusEditable(true);
+  };
+
+  // Confirm the radius: turn it into a circular alarm zone (32-sided
+  // polygon, reusing the existing polygon-based alarm logic) and stop
+  // showing the draggable handle.
+  const handleConfirmRadius = () => {
+    setRadiusEditable(false);
+
+    const steps = 32;
+    const points = [];
+    for (let i = 0; i < steps; i++) {
+      const angle = (i / steps) * 2 * Math.PI;
+      const dLat = (anchorRadius * Math.cos(angle)) / 111320;
+      const dLon =
+        (anchorRadius * Math.sin(angle)) /
+        (111320 * Math.cos((anchor.latitude * Math.PI) / 180));
+      points.push([anchor.latitude + dLat, anchor.longitude + dLon]);
+    }
+    onZoneUpdate(points);
+  };
+
+  const boatLocation = locations ? Object.values(locations)[0] : null;
+  const anchorDistance =
+    anchor && boatLocation
+      ? distanceMeters(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
+      : null;
+  const anchorBearing =
+    anchor && boatLocation
+      ? bearingDegrees(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
+      : null;
+
   return (
     <div className="map-container">
       <div className="map-header">
@@ -250,6 +358,42 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         <span className="status-text">{status}</span>
       </div>
 
+      <div className="anchor-bar">
+        {!anchor && (
+          <button className="drop-anchor-btn" onClick={handleDropAnchorClick}>
+            ⚓ Mouiller l'ancre
+          </button>
+        )}
+
+        {anchor && radiusEditable && (
+          <>
+            <span className="anchor-info">
+              Rayon de la zone : <strong>{anchorRadius} m</strong> — glissez le point vert sur la carte
+            </span>
+            <button className="drop-anchor-btn" onClick={handleConfirmRadius}>
+              ⚓ Valider la zone
+            </button>
+          </>
+        )}
+
+        {anchor && !radiusEditable && (
+          <>
+            <span className="anchor-info">
+              ⚓ Ancre posée
+              {anchorDistance !== null
+                ? ` · ${Math.round(anchorDistance)} m · ${bearingToCompass(anchorBearing)} (${Math.round(anchorBearing)}°)`
+                : ''}
+            </span>
+            <button className="clear-anchor-btn" onClick={() => setRadiusEditable(true)}>
+              Ajuster le rayon
+            </button>
+            <button className="clear-anchor-btn" onClick={onClearAnchor}>
+              Retirer l'ancre
+            </button>
+          </>
+        )}
+      </div>
+
       <div ref={mapContainer} className="map" />
 
       <div className="instructions">
@@ -260,6 +404,10 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         <div className="instruction-item">
           <span className="icon">📍</span>
           <span>Repère rouge = position du bateau</span>
+        </div>
+        <div className="instruction-item">
+          <span className="icon">⚓</span>
+          <span>Repère ancre = position de l'ancre</span>
         </div>
         <div className="instruction-item">
           <span className="icon">🟠</span>

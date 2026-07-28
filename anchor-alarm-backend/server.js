@@ -16,7 +16,7 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Store active sessions: { sessionId: { zone, locations, alarmed } }
+// Store active sessions: { sessionId: { zone, locations, alarmed, anchor } }
 const sessions = new Map();
 
 // Helper: Generate session ID
@@ -52,6 +52,7 @@ app.post('/api/sessions', (req, res) => {
     zone: [],
     locations: {},
     alarmed: false,
+    anchor: null,
     createdAt: Date.now()
   });
 
@@ -71,7 +72,8 @@ app.get('/api/sessions/:sessionId', (req, res) => {
     sessionId,
     zone: session.zone,
     locations: session.locations,
-    alarmed: session.alarmed
+    alarmed: session.alarmed,
+    anchor: session.anchor
   });
 });
 
@@ -99,7 +101,8 @@ io.on('connection', (socket) => {
     socket.emit('state-update', {
       zone: session.zone,
       locations: session.locations,
-      alarmed: session.alarmed
+      alarmed: session.alarmed,
+      anchor: session.anchor
     });
 
     // Notify others in session
@@ -114,6 +117,18 @@ io.on('connection', (socket) => {
     if (session) {
       session.zone = zone;
       io.to(socket.sessionId).emit('zone-updated', { zone });
+    }
+  });
+
+  // Update anchor position (from main app). anchor is either
+  // { latitude, longitude, accuracy, timestamp } or null to clear it.
+  socket.on('update-anchor', (data) => {
+    const { anchor } = data;
+    const session = sessions.get(socket.sessionId);
+
+    if (session) {
+      session.anchor = anchor;
+      io.to(socket.sessionId).emit('anchor-updated', { anchor });
     }
   });
 

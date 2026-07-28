@@ -5,7 +5,8 @@ const config: CapacitorConfig = {
   appName: 'Anchor Alarm',
   webDir: 'build',
   server: {
-    cleartext: true
+    cleartext: true,
+    androidScheme: 'http'
   },
   plugins: {
     LocalNotifications: {

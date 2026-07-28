@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { distanceMeters, bearingDegrees, bearingToCompass } from '../utils/geo';
 import './RemoteMonitor.css';
 
 const BOAT_ICON = L.icon({
@@ -10,7 +11,15 @@ const BOAT_ICON = L.icon({
   popupAnchor: [0, -16]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
+const ANCHOR_ICON = L.divIcon({
+  className: 'anchor-marker',
+  html: '⚓',
+  iconSize: [30, 30],
+  iconAnchor: [15, 15],
+  popupAnchor: [0, -15]
+});
+
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const zoneLayer = useRef(null);
@@ -23,6 +32,8 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
   // never removed, so circles piled up on top of each other.
   const boatMarker = useRef(null);
   const accuracyCircle = useRef(null);
+  const anchorMarker = useRef(null);
+  const anchorLine = useRef(null);
   // We only ever auto-center/zoom the map once, on the very first GPS fix.
   // After that we leave the user's pan/zoom completely alone.
   const hasCenteredMap = useRef(false);
@@ -52,6 +63,8 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
       boatMarker.current = null;
       accuracyCircle.current = null;
       hasCenteredMap.current = false;
+      anchorMarker.current = null;
+      anchorLine.current = null;
     };
   }, []);
 
@@ -123,7 +136,64 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
     }
   }, [locations]);
 
+  // Update anchor marker + chain line to the boat
+  useEffect(() => {
+    if (!map.current) return;
+
+    if (!anchor) {
+      if (anchorMarker.current) {
+        map.current.removeLayer(anchorMarker.current);
+        anchorMarker.current = null;
+      }
+      if (anchorLine.current) {
+        map.current.removeLayer(anchorLine.current);
+        anchorLine.current = null;
+      }
+      return;
+    }
+
+    const anchorLatLng = [anchor.latitude, anchor.longitude];
+    const popupText = `⚓ Position de l'ancre${
+      anchor.accuracy ? `<br/>Précision : ${Math.round(anchor.accuracy)} m` : ''
+    }`;
+
+    if (!anchorMarker.current) {
+      anchorMarker.current = L.marker(anchorLatLng, { icon: ANCHOR_ICON })
+        .addTo(map.current)
+        .bindPopup(popupText);
+    } else {
+      anchorMarker.current.setLatLng(anchorLatLng);
+      anchorMarker.current.setPopupContent(popupText);
+    }
+
+    const currentLocation = locations ? Object.values(locations)[0] : null;
+    if (currentLocation) {
+      const boatLatLng = [currentLocation.latitude, currentLocation.longitude];
+      if (!anchorLine.current) {
+        anchorLine.current = L.polyline([anchorLatLng, boatLatLng], {
+          color: '#8e44ad',
+          weight: 2,
+          dashArray: '4, 6',
+          opacity: 0.7
+        }).addTo(map.current);
+      } else {
+        anchorLine.current.setLatLngs([anchorLatLng, boatLatLng]);
+      }
+    } else if (anchorLine.current) {
+      map.current.removeLayer(anchorLine.current);
+      anchorLine.current = null;
+    }
+  }, [anchor, locations]);
+
   const boatLocation = locations ? Object.values(locations)[0] : null;
+  const anchorDistance =
+    anchor && boatLocation
+      ? distanceMeters(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
+      : null;
+  const anchorBearing =
+    anchor && boatLocation
+      ? bearingDegrees(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
+      : null;
 
   return (
     <div className="remote-monitor">
@@ -155,6 +225,14 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
               {new Date(boatLocation.timestamp).toLocaleTimeString('fr-FR')}
             </span>
           </div>
+          {anchor && anchorDistance !== null && (
+            <div className="info-item">
+              <span className="label">Distance à l'ancre :</span>
+              <span className="value">
+                {Math.round(anchorDistance)} m · {bearingToCompass(anchorBearing)} ({Math.round(anchorBearing)}°)
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="boat-info">
@@ -168,6 +246,10 @@ export default function RemoteMonitor({ zone, locations, sessionId, onBack }) {
         <div className="legend-item">
           <span className="legend-color" style={{ background: '#ff4444' }}></span>
           Position du bateau
+        </div>
+        <div className="legend-item">
+          <span className="legend-color" style={{ background: '#8e44ad' }}></span>
+          Ancre
         </div>
         <div className="legend-item">
           <span className="legend-color" style={{ background: 'rgba(255, 120, 0, 0.15)', border: '2px dashed #ff7800' }}></span>

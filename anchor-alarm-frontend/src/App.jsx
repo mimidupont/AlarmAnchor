@@ -1,11 +1,12 @@
 /**
- * App.jsx - UPDATED WITH MOBILE AUDIO ALERTS
+ * App.jsx - UPDATED WITH MOBILE AUDIO ALERTS + ANCHOR DROP
  * 
  * Changes from original:
  * 1. Replaced HTML5 audio element with useMobileAudioAlert hook
  * 2. Improved permission management
  * 3. Added Service Worker registration
  * 4. Better error handling for mobile audio
+ * 5. Added manual anchor-drop tracking (separate from live boat GPS)
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -30,6 +31,7 @@ export default function App() {
   const [alarmed, setAlarmed] = useState(false);
   const [error, setError] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [anchor, setAnchor] = useState(null); // { latitude, longitude, accuracy, timestamp } | null
   const gpsWatchId = useRef(null);
   
 // Create the native notification channel (Android 8+ requires this)
@@ -75,10 +77,15 @@ export default function App() {
       setZone(data.zone);
       setLocations(data.locations);
       setAlarmed(data.alarmed);
+      setAnchor(data.anchor || null);
     });
 
     newSocket.on('zone-updated', (data) => {
       setZone(data.zone);
+    });
+
+    newSocket.on('anchor-updated', (data) => {
+      setAnchor(data.anchor);
     });
 
     newSocket.on('location-updated', (data) => {
@@ -250,6 +257,50 @@ return () => {
     }
   };
 
+  // Drop anchor: capture a fresh, precise GPS fix and record it as the
+  // anchor's position (distinct from the boat's live position, since
+  // you typically pay out 15-35m of chain after dropping).
+  const handleDropAnchor = async () => {
+    try {
+      const permStatus = await Geolocation.checkPermissions();
+      if (permStatus.location !== 'granted') {
+        const req = await Geolocation.requestPermissions();
+        if (req.location !== 'granted') {
+          setError("Permission de localisation refusée, impossible de poser l'ancre");
+          return;
+        }
+      }
+
+      const position = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 10000
+      });
+
+      const anchorData = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        timestamp: new Date().toISOString()
+      };
+
+      setAnchor(anchorData);
+      if (socket && sessionId) {
+        socket.emit('update-anchor', { anchor: anchorData });
+      }
+    } catch (err) {
+      console.error('Failed to drop anchor:', err);
+      setError(`Impossible de définir la position de l'ancre : ${err.message}`);
+    }
+  };
+
+  // Clear anchor (e.g. weighed anchor / repositioning)
+  const handleClearAnchor = () => {
+    setAnchor(null);
+    if (socket && sessionId) {
+      socket.emit('update-anchor', { anchor: null });
+    }
+  };
+
   // Acknowledge alarm
   const handleAcknowledgeAlarm = () => {
     stopAlarm();
@@ -336,6 +387,9 @@ return () => {
           sessionId={sessionId}
           onZoneUpdate={handleZoneUpdate}
           role="main"
+          anchor={anchor}
+          onDropAnchor={handleDropAnchor}
+          onClearAnchor={handleClearAnchor}
           onBack={() => {
             if (gpsWatchId.current) {
               Geolocation.clearWatch({ id: gpsWatchId.current });
@@ -346,6 +400,7 @@ return () => {
             setZone([]);
             setLocations({});
             setAlarmed(false);
+            setAnchor(null);
           }}
         />
       )}
@@ -356,12 +411,14 @@ return () => {
           zone={zone}
           locations={locations}
           sessionId={sessionId}
+          anchor={anchor}
           onBack={() => {
             setView('session');
             setSessionId(null);
             setZone([]);
             setLocations({});
             setAlarmed(false);
+            setAnchor(null);
           }}
         />
       )}

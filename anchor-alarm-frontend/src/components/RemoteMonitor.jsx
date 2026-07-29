@@ -52,7 +52,17 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       maxZoom: 19
     }).addTo(map.current);
 
+    // Leaflet measures its container at creation time. If that container
+    // hasn't finished laying out yet (very common right after switching
+    // React views), it renders tiles for the wrong size and half the map
+    // stays blank until something forces a recheck.
+    const resizeObserver = new ResizeObserver(() => {
+      map.current?.invalidateSize();
+    });
+    resizeObserver.observe(mapContainer.current);
+
     return () => {
+      resizeObserver.disconnect();
       if (map.current) {
         map.current.remove();
         map.current = null;

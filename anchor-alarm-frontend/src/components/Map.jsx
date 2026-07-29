@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
-import { distanceMeters, bearingDegrees, bearingToCompass } from '../utils/geo';
+import { distanceMeters, bearingDegrees, bearingToCompass, circlePolygonPoints } from '../utils/geo';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
@@ -176,7 +176,19 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     map.current.on('draw:edited', handleDrawEdited);
     map.current.on('draw:deleted', handleDrawDeleted);
 
+    // Leaflet measures its container at creation time. If that container
+    // hasn't finished laying out yet (very common right after switching
+    // React views), it renders tiles for the wrong size and half the map
+    // stays blank until something forces a recheck. The anchor-bar also
+    // changes height depending on its content, which resizes this
+    // container after the fact — this keeps Leaflet in sync automatically.
+    const resizeObserver = new ResizeObserver(() => {
+      map.current?.invalidateSize();
+    });
+    resizeObserver.observe(mapContainer.current);
+
     return () => {
+      resizeObserver.disconnect();
       if (map.current) {
         map.current.off('draw:created', handleDrawCreated);
         map.current.off('draw:edited', handleDrawEdited);
@@ -307,29 +319,45 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
   // Drop anchor, then immediately open the radius editor so the scope
   // (chain length) can be adjusted before confirming the alarm zone.
+  // Clears any previously confirmed zone shape so the temporary draggable
+  // circle isn't shown overlapping it.
   const handleDropAnchorClick = async () => {
     await onDropAnchor();
     setAnchorRadius(DEFAULT_ANCHOR_RADIUS);
+    if (drawnItems.current) drawnItems.current.clearLayers();
     setRadiusEditable(true);
   };
 
-  // Confirm the radius: turn it into a circular alarm zone (32-sided
-  // polygon, reusing the existing polygon-based alarm logic) and stop
-  // showing the draggable handle.
+  // Re-open the radius editor on an already-placed anchor, e.g. to widen
+  // or shrink the zone after having previously confirmed it.
+  const handleAdjustRadius = () => {
+    if (drawnItems.current) drawnItems.current.clearLayers();
+    setRadiusEditable(true);
+  };
+
+  // Confirm the radius: this circle IS the alarm zone (not a preview drawn
+  // on top of a separate zone), so turn it directly into a real Leaflet
+  // polygon inside `drawnItems`. That's the same FeatureGroup the edit
+  // toolbar (pencil icon, top-right) is wired to, so afterwards you can
+  // drag individual vertices to reshape it away from a perfect circle —
+  // exactly like editing a manually-drawn zone.
   const handleConfirmRadius = () => {
     setRadiusEditable(false);
 
-    const steps = 32;
-    const points = [];
-    for (let i = 0; i < steps; i++) {
-      const angle = (i / steps) * 2 * Math.PI;
-      const dLat = (anchorRadius * Math.cos(angle)) / 111320;
-      const dLon =
-        (anchorRadius * Math.sin(angle)) /
-        (111320 * Math.cos((anchor.latitude * Math.PI) / 180));
-      points.push([anchor.latitude + dLat, anchor.longitude + dLon]);
-    }
+    const points = circlePolygonPoints(anchor.latitude, anchor.longitude, anchorRadius);
+
+    drawnItems.current.clearLayers();
+    const polygon = L.polygon(points, {
+      color: '#ff7800',
+      weight: 3,
+      opacity: 0.8,
+      fillOpacity: 0.15,
+      dashArray: '5, 5'
+    });
+    drawnItems.current.addLayer(polygon);
+
     onZoneUpdate(points);
+    setStatus(`Zone de mouillage définie (rayon ${anchorRadius} m)`);
   };
 
   const boatLocation = locations ? Object.values(locations)[0] : null;
@@ -384,7 +412,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
                 ? ` · ${Math.round(anchorDistance)} m · ${bearingToCompass(anchorBearing)} (${Math.round(anchorBearing)}°)`
                 : ''}
             </span>
-            <button className="clear-anchor-btn" onClick={() => setRadiusEditable(true)}>
+            <button className="clear-anchor-btn" onClick={handleAdjustRadius}>
               Ajuster le rayon
             </button>
             <button className="clear-anchor-btn" onClick={onClearAnchor}>
@@ -395,25 +423,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       </div>
 
       <div ref={mapContainer} className="map" />
-
-      <div className="instructions">
-        <div className="instruction-item">
-          <span className="icon">✏️</span>
-          <span>Dessinez un polygone pour définir la zone de mouillage</span>
-        </div>
-        <div className="instruction-item">
-          <span className="icon">📍</span>
-          <span>Repère rouge = position du bateau</span>
-        </div>
-        <div className="instruction-item">
-          <span className="icon">⚓</span>
-          <span>Repère ancre = position de l'ancre</span>
-        </div>
-        <div className="instruction-item">
-          <span className="icon">🟠</span>
-          <span>Contour orange = zone de mouillage</span>
-        </div>
-      </div>
     </div>
   );
 }

@@ -36,3 +36,22 @@ export function destinationEast(lat, lon, meters) {
   const metersPerDegLon = 111320 * Math.cos((lat * Math.PI) / 180);
   return [lat, lon + meters / metersPerDegLon];
 }
+
+// Builds an approximate circular polygon (array of [lat, lng] points) of
+// the given radius (meters) around a center point. Uses a modest point
+// count by default (rather than a smooth 32+ sided circle) so that once
+// this becomes a real editable polygon, each vertex is still easy to grab
+// and drag individually to reshape the zone away from a perfect circle.
+export function circlePolygonPoints(lat, lon, radiusMeters, steps = 16) {
+  const metersPerDegLat = 111320;
+  const points = [];
+  for (let i = 0; i < steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI;
+    const dLat = (radiusMeters * Math.cos(angle)) / metersPerDegLat;
+    const dLon =
+      (radiusMeters * Math.sin(angle)) /
+      (metersPerDegLat * Math.cos((lat * Math.PI) / 180));
+    points.push([lat + dLat, lon + dLon]);
+  }
+  return points;
+}

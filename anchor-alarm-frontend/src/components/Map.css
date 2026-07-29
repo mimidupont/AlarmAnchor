@@ -191,28 +191,6 @@
   cursor: grabbing;
 }
 
-.instructions {
-  background: white;
-  padding: 16px 20px;
-  border-top: 1px solid #ddd;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 16px;
-}
-
-.instruction-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: #666;
-}
-
-.instruction-item .icon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
 @media (max-width: 768px) {
   .map-header {
     flex-direction: column;
@@ -233,10 +211,6 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-  }
-
-  .instructions {
-    grid-template-columns: 1fr;
   }
 
   .map-header h2 {

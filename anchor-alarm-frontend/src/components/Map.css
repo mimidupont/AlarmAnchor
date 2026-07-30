@@ -25,7 +25,78 @@
   z-index: 1;
 }
 
-/* ---- Bottom action bar ---- */
+/* ---- Stage 1: floating drop button ---- */
+
+.float-drop-btn {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 20px;
+  z-index: 1100;
+  min-height: 56px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--ok-strong);
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.float-drop-btn:active {
+  background: var(--ok);
+}
+
+/* ---- Stage 2: radius bottom sheet ---- */
+
+.radius-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1100;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-subtle);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 12px 16px 16px;
+  text-align: center;
+}
+
+.radius-sheet-value {
+  font-size: 40px;
+  font-weight: 500;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.radius-sheet-unit {
+  font-size: 18px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+.radius-slider {
+  width: 100%;
+  margin: 10px 0 4px;
+  accent-color: var(--ok-strong);
+  height: 44px; /* comfortable touch target */
+}
+
+.radius-sheet-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.radius-arm-btn {
+  width: 100%;
+  min-height: 56px;
+  font-size: 17px;
+}
+
+/* ---- Stage 3: bottom action bar ---- */
 
 .action-bar {
   display: flex;
@@ -71,19 +142,6 @@
 
 .action-danger:active {
   background: var(--danger-bg);
-}
-
-.radius-info {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text-secondary);
-  padding-left: 4px;
-}
-
-.radius-info strong {
-  color: var(--text-primary);
-  font-size: 15px;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ---- Leaflet chrome ---- */

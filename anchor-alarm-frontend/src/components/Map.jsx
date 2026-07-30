@@ -351,6 +351,17 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     }
   }, [anchor, locations]);
 
+  // Entering the radius editor: zoom to the anchor so the circle and its
+  // drag handle are at a workable size (at anchorage zoom the 25 m circle
+  // is a few pixels). One deliberate view change per explicit user action
+  // — not an automatic follow.
+  useEffect(() => {
+    if (radiusEditable && anchor && map.current) {
+      boatMarker.current?.closePopup();
+      map.current.setView([anchor.latitude, anchor.longitude], 17);
+    }
+  }, [radiusEditable, anchor]);
+
   // Drop anchor, then immediately open the radius editor so the scope
   // (chain length) can be adjusted before confirming the alarm zone.
   // Clears any previously confirmed zone shape so the temporary draggable
@@ -471,38 +482,54 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
       <div ref={mapContainer} className="map" />
 
-      <ThemeToggle theme={theme} onCycle={onCycleTheme} />
+      {/* Hidden while the radius sheet is up — it would sit under it */}
+      {!radiusEditable && <ThemeToggle theme={theme} onCycle={onCycleTheme} />}
 
-      {/* Bottom action bar */}
-      <div className="action-bar">
-        {!anchor && (
-          <button className="action-btn action-primary" onClick={handleDropAnchorClick}>
-            ⚓ Drop anchor
+      {/* Stage 1 — DROP: one large floating button over the map */}
+      {!anchor && (
+        <button className="float-drop-btn" onClick={handleDropAnchorClick}>
+          ⚓ Drop anchor
+        </button>
+      )}
+
+      {/* Stage 2 — SET RADIUS: bottom sheet with slider, two-way synced
+          with the draggable green handle on the map (both go through
+          setAnchorRadius, which useAnchorRadius renders). The map stays
+          interactive behind the sheet so the handle can still be dragged. */}
+      {anchor && radiusEditable && (
+        <div className="radius-sheet">
+          <div className="radius-sheet-value">
+            {anchorRadius}
+            <span className="radius-sheet-unit">m</span>
+          </div>
+          <input
+            type="range"
+            className="radius-slider"
+            min={10}
+            max={100}
+            step={5}
+            value={Math.min(100, Math.max(10, anchorRadius))}
+            onChange={(e) => setAnchorRadius(Number(e.target.value))}
+            aria-label="Zone radius"
+          />
+          <div className="radius-sheet-hint">Slide, or drag the green handle on the map</div>
+          <button className="action-btn action-primary radius-arm-btn" onClick={handleConfirmRadius}>
+            Arm alarm
           </button>
-        )}
+        </div>
+      )}
 
-        {anchor && radiusEditable && (
-          <>
-            <span className="radius-info">
-              Radius <strong>{anchorRadius} m</strong> — drag the green handle
-            </span>
-            <button className="action-btn action-primary" onClick={handleConfirmRadius}>
-              Arm alarm
-            </button>
-          </>
-        )}
-
-        {armed && (
-          <>
-            <button className="action-btn" onClick={handleAdjustRadius}>
-              Adjust zone
-            </button>
-            <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
-              Raise anchor
-            </button>
-          </>
-        )}
-      </div>
+      {/* Stage 3 — ARMED: bottom action bar */}
+      {armed && (
+        <div className="action-bar">
+          <button className="action-btn" onClick={handleAdjustRadius}>
+            Adjust zone
+          </button>
+          <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
+            Raise anchor
+          </button>
+        </div>
+      )}
 
       {confirmRaiseOpen && (
         <ConfirmDialog

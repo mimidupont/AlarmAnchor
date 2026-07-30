@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Native colors referenced by styles.xml. Without this file AAPT2 fails
+  with "resource color/colorPrimary not found" and the app never builds.
+
+  Values mirror the web UI's night palette (src/theme.css) so the native
+  chrome (status bar, dialogs, splash) matches the in-app instrument look.
+-->
+<resources>
+    <!-- bg-panel -->
+    <color name="colorPrimary">#161D29</color>
+    <!-- bg-app; used for the status bar -->
+    <color name="colorPrimaryDark">#0D1117</color>
+    <!-- ok-strong; matches the app's primary buttons -->
+    <color name="colorAccent">#1D9E75</color>
+</resources>

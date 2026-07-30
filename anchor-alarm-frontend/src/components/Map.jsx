@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+// The draw toolbar is gone, but leaflet-draw is still the vertex editor:
+// its CSS styles `.leaflet-editing-icon` handles and the module provides
+// `L.EditToolbar.Edit`, which we drive directly from the zone sheet.
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
@@ -10,38 +13,11 @@ import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
 import StatusPill from './StatusPill';
+import ZoneSheet from './ZoneSheet';
 import { useT } from '../i18n';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
-
-// Localize the Leaflet-Draw plugin's toolbar/tooltips. L.drawLocal is a
-// global read lazily by the plugin, so mutating it per language change is
-// enough — called from an effect below.
-const applyDrawLocale = (t) => {
-  L.drawLocal.draw.toolbar.buttons.polygon = t('drawZone');
-  L.drawLocal.draw.toolbar.actions.title = t('drawCancel');
-  L.drawLocal.draw.toolbar.actions.text = t('drawCancel');
-  L.drawLocal.draw.toolbar.finish.title = t('drawFinish');
-  L.drawLocal.draw.toolbar.finish.text = t('drawFinish');
-  L.drawLocal.draw.toolbar.undo.title = t('drawDeleteLast');
-  L.drawLocal.draw.toolbar.undo.text = t('drawDeleteLast');
-  L.drawLocal.draw.handlers.polygon.tooltip.start = t('drawTooltipStart');
-  L.drawLocal.draw.handlers.polygon.tooltip.cont = t('drawTooltipCont');
-  L.drawLocal.draw.handlers.polygon.tooltip.end = t('drawTooltipEnd');
-
-  L.drawLocal.edit.toolbar.buttons.edit = t('editZone');
-  L.drawLocal.edit.toolbar.buttons.editDisabled = t('editZoneNone');
-  L.drawLocal.edit.toolbar.buttons.remove = t('deleteZone');
-  L.drawLocal.edit.toolbar.buttons.removeDisabled = t('deleteZoneNone');
-  L.drawLocal.edit.toolbar.actions.save.title = t('editSave');
-  L.drawLocal.edit.toolbar.actions.save.text = t('editSave');
-  L.drawLocal.edit.toolbar.actions.cancel.title = t('editCancel');
-  L.drawLocal.edit.toolbar.actions.cancel.text = t('editCancel');
-  L.drawLocal.edit.handlers.edit.tooltip.text = t('editTooltip');
-  L.drawLocal.edit.handlers.edit.tooltip.subtext = '';
-  L.drawLocal.edit.handlers.remove.tooltip.text = t('deleteTooltip');
-};
 
 const BOAT_ICON = L.icon({
   iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSI2IiBmaWxsPSIjRkY0NDQ0IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMiIvPjwvc3ZnPgo=',
@@ -60,6 +36,26 @@ const ANCHOR_ICON = L.divIcon({
 
 // Default scope: middle of the common 15-35m chain range.
 const DEFAULT_ANCHOR_RADIUS = 25;
+
+// Confirmed alarm-zone polygon styling.
+const ZONE_STYLE = {
+  color: '#ff7800',
+  weight: 3,
+  opacity: 0.8,
+  fillOpacity: 0.15,
+  dashArray: '5, 5'
+};
+
+// A vertex further than this from the anchor radius means the zone has
+// been hand-reshaped and is no longer a plain circle.
+const RESHAPED_TOLERANCE_M = 2;
+
+// Vertex count when materialising a circle for shape editing. Lower than
+// the 16 used for a confirmed circle: leaflet-draw adds a midpoint handle
+// between every pair, so 12 vertices already means 24 handles on screen
+// and any more become impossible to grab individually. The resulting
+// polygon sits at worst ~3% inside the nominal radius, far below GPS noise.
+const SHAPE_STEPS = 12;
 
 export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme, connected, gpsError }) {
   const t = useT();
@@ -88,43 +84,21 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // on every render.
   const handleAdjustRadiusRef = useRef(() => {});
   const onClearAnchorRef = useRef(() => {});
+  // Live vertex-editing handler (leaflet-draw's edit mode, driven from
+  // the zone sheet instead of the removed toolbar).
+  const editHandler = useRef(null);
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
-  const [radiusEditable, setRadiusEditable] = useState(false);
+  const [zoneEditing, setZoneEditing] = useState(false); // sheet visible
+  const [zoneMode, setZoneMode] = useState('circle'); // 'circle' | 'shape'
+  // Confirming from the drop-anchor flow arms the alarm; re-editing an
+  // already-armed zone just closes the sheet.
+  const [initialSetup, setInitialSetup] = useState(false);
   const [confirmRaiseOpen, setConfirmRaiseOpen] = useState(false);
+  const [confirmBackToCircleOpen, setConfirmBackToCircleOpen] = useState(false);
 
-  // Keep the leaflet-draw toolbar strings in the current language.
-  useEffect(() => {
-    applyDrawLocale(t);
-  }, [t]);
-
-  // Draws the (optionally draggable) radius circle around the anchor.
-  useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, radiusEditable);
-
-  // Handle draw creation
-  // NOTE: the created layer is now added to `drawnItems` (the FeatureGroup
-  // wired to the edit/remove controls). Previously the layer was discarded
-  // after reading its coordinates, which left the edit/remove toolbar
-  // buttons with nothing to act on.
-  const handleDrawCreated = (e) => {
-    const layer = e.layer;
-    if (layer instanceof L.Polygon) {
-      // Only one anchor zone at a time
-      drawnItems.current.clearLayers();
-
-      layer.setStyle({
-        color: '#ff7800',
-        weight: 3,
-        opacity: 0.8,
-        fillOpacity: 0.15,
-        dashArray: '5, 5'
-      });
-
-      drawnItems.current.addLayer(layer);
-
-      const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
-      onZoneUpdate(coordinates);
-    }
-  };
+  // The temporary green circle + drag handle belong to circle mode only,
+  // so they never sit on top of the real polygon while reshaping it.
+  useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, zoneEditing && zoneMode === 'circle');
 
   // Handle draw editing
   const handleDrawEdited = (e) => {
@@ -135,11 +109,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         onZoneUpdate(coordinates);
       }
     });
-  };
-
-  // Handle draw deletion
-  const handleDrawDeleted = () => {
-    onZoneUpdate([]);
   };
 
   // Initialize map
@@ -163,40 +132,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     drawnItems.current = new L.FeatureGroup();
     map.current.addLayer(drawnItems.current);
 
-    // Initialize draw control
-    const drawControl = new L.Control.Draw({
-      position: 'topright',
-      draw: {
-        polygon: {
-          shapeOptions: {
-            color: '#3388ff',
-            weight: 2,
-            opacity: 0.8,
-            fillOpacity: 0.2
-          },
-          // showArea triggers the well-known "type is not defined" crash
-          // in leaflet-draw 1.0.4 with Leaflet 1.8+ while drawing.
-          showArea: false,
-          metric: true
-        },
-        polyline: false,
-        rectangle: false,
-        circle: false,
-        marker: false,
-        circlemarker: false
-      },
-      edit: {
-        featureGroup: drawnItems.current,
-        remove: true
-      }
-    });
-
-    map.current.addControl(drawControl);
-
-    // Handle draw events
-    map.current.on('draw:created', handleDrawCreated);
+    // Vertex drags in shape mode land here via EditToolbar.Edit.save().
     map.current.on('draw:edited', handleDrawEdited);
-    map.current.on('draw:deleted', handleDrawDeleted);
 
     // Leaflet measures its container at creation time. If that container
     // hasn't finished laying out yet (very common right after switching
@@ -211,10 +148,12 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
     return () => {
       resizeObserver.disconnect();
+      if (editHandler.current) {
+        editHandler.current.disable();
+        editHandler.current = null;
+      }
       if (map.current) {
-        map.current.off('draw:created', handleDrawCreated);
         map.current.off('draw:edited', handleDrawEdited);
-        map.current.off('draw:deleted', handleDrawDeleted);
         map.current.remove();
         map.current = null;
       }
@@ -229,12 +168,33 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     };
   }, []);
 
-  // NOTE: There is intentionally no separate useEffect re-drawing `zone` as
-  // a second polygon here (unlike RemoteMonitor). Since the drawn/edited
-  // polygon already lives inside `drawnItems` and is rendered on the map,
-  // adding another layer from the `zone` prop would create a visible
-  // duplicate. RemoteMonitor has no draw controls, so it still needs its
-  // own zone-drawing effect.
+  // The confirmed zone lives as a real polygon inside `drawnItems` (that's
+  // what the vertex editor edits), so it is only (re)built from the `zone`
+  // prop when the group is empty — on mount/remount, or after rejoining a
+  // session whose zone was set on another device. Rebuilding it while it
+  // already exists would stack a duplicate on top.
+  const getZonePolygon = () => {
+    let found = null;
+    drawnItems.current?.eachLayer((layer) => {
+      if (layer instanceof L.Polygon) found = layer;
+    });
+    return found;
+  };
+
+  const polygonPoints = (polygon) =>
+    polygon.getLatLngs()[0].map((latlng) => [latlng.lat, latlng.lng]);
+
+  const setZonePolygon = (points) => {
+    drawnItems.current.clearLayers();
+    drawnItems.current.addLayer(L.polygon(points, ZONE_STYLE));
+  };
+
+  useEffect(() => {
+    if (!map.current || zoneEditing) return;
+    if (!zone || zone.length < 3) return;
+    if (getZonePolygon()) return;
+    setZonePolygon(zone);
+  }, [zone, zoneEditing]);
 
   // Update boat position
   useEffect(() => {
@@ -367,59 +327,167 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // is a few pixels). One deliberate view change per explicit user action
   // — not an automatic follow.
   useEffect(() => {
-    if (radiusEditable && anchor && map.current) {
+    if (zoneEditing && anchor && map.current) {
       boatMarker.current?.closePopup();
       map.current.setView([anchor.latitude, anchor.longitude], 17);
     }
-  }, [radiusEditable, anchor]);
+  }, [zoneEditing, anchor]);
 
-  // Drop anchor, then immediately open the radius editor so the scope
-  // (chain length) can be adjusted before confirming the alarm zone.
-  // Clears any previously confirmed zone shape so the temporary draggable
-  // circle isn't shown overlapping it.
+  // ---- Zone editing ----------------------------------------------------
+
+  // True when the current polygon deviates from a plain circle of the
+  // current radius, i.e. the user has dragged vertices around.
+  const isZoneReshaped = () => {
+    const polygon = getZonePolygon();
+    if (!polygon || !anchor) return false;
+    return polygonPoints(polygon).some(
+      ([lat, lng]) =>
+        Math.abs(distanceMeters(anchor.latitude, anchor.longitude, lat, lng) - anchorRadius) >
+        RESHAPED_TOLERANCE_M
+    );
+  };
+
+  const enableVertexEditing = () => {
+    if (!map.current || !drawnItems.current || editHandler.current) return;
+    editHandler.current = new L.EditToolbar.Edit(map.current, {
+      featureGroup: drawnItems.current
+    });
+    editHandler.current.enable();
+  };
+
+  // `save()` is what emits draw:edited; disable() alone would discard the
+  // drag. Callers that need the vertices immediately read the polygon
+  // directly rather than waiting on the event.
+  const disableVertexEditing = ({ save = true } = {}) => {
+    if (!editHandler.current) return;
+    if (save) editHandler.current.save();
+    editHandler.current.disable();
+    editHandler.current = null;
+  };
+
+  const enterShapeMode = () => {
+    // The editor needs a polygon to attach handles to. Prefer whatever is
+    // already on the map (possibly reshaped), else materialise the circle.
+    if (!getZonePolygon()) {
+      if (!anchor) return;
+      const points = circlePolygonPoints(anchor.latitude, anchor.longitude, anchorRadius, SHAPE_STEPS);
+      setZonePolygon(points);
+      onZoneUpdate(points);
+    }
+    setZoneMode('shape');
+    enableVertexEditing();
+  };
+
+  const enterCircleMode = () => {
+    disableVertexEditing({ save: false });
+    drawnItems.current?.clearLayers();
+    setZoneMode('circle');
+  };
+
+  const handleModeChange = (next) => {
+    if (next === zoneMode) return;
+    if (next === 'shape') {
+      enterShapeMode();
+      return;
+    }
+    // Going back to a circle throws away a hand-shaped zone — only worth
+    // asking about when there is actually a custom shape to lose.
+    if (isZoneReshaped()) {
+      setConfirmBackToCircleOpen(true);
+      return;
+    }
+    enterCircleMode();
+  };
+
+  const handleResetToCircle = () => {
+    if (!anchor) return;
+    disableVertexEditing({ save: false });
+    const points = circlePolygonPoints(anchor.latitude, anchor.longitude, anchorRadius, SHAPE_STEPS);
+    setZonePolygon(points);
+    onZoneUpdate(points);
+    enableVertexEditing();
+  };
+
+  // Shape mode is unusable at anchorage zoom: a 40 m circle is ~45 px
+  // across, so every handle overlaps its neighbours. Fit the polygon into
+  // the strip of map still visible above the sheet, measuring the sheet
+  // rather than assuming its height.
+  useEffect(() => {
+    if (!zoneEditing || zoneMode !== 'shape' || !map.current) return;
+    const polygon = getZonePolygon();
+    if (!polygon) return;
+    const id = setTimeout(() => {
+      if (!map.current) return;
+      const sheetHeight = document.querySelector('.zone-sheet')?.offsetHeight || 0;
+      map.current.fitBounds(polygon.getBounds(), {
+        paddingTopLeft: [36, 36],
+        paddingBottomRight: [36, sheetHeight + 36],
+        maxZoom: 20
+      });
+    }, 80);
+    return () => clearTimeout(id);
+  }, [zoneEditing, zoneMode]);
+
+  // Drop anchor, then open the zone sheet in circle mode so the scope
+  // (chain length) is set before the alarm is armed.
   const handleDropAnchorClick = async () => {
     await onDropAnchor();
     setAnchorRadius(DEFAULT_ANCHOR_RADIUS);
-    if (drawnItems.current) drawnItems.current.clearLayers();
-    setRadiusEditable(true);
+    drawnItems.current?.clearLayers();
+    setZoneMode('circle');
+    setInitialSetup(true);
+    setZoneEditing(true);
   };
 
-  // Re-open the radius editor on an already-placed anchor, e.g. to widen
-  // or shrink the zone after having previously confirmed it.
-  const handleAdjustRadius = () => {
-    if (drawnItems.current) drawnItems.current.clearLayers();
-    setRadiusEditable(true);
+  // Re-open the sheet on an already-armed zone (action bar, or the anchor
+  // popup). Start in whichever mode matches the zone as it stands.
+  const handleAdjustZone = () => {
+    setInitialSetup(false);
+    if (isZoneReshaped()) {
+      setZoneMode('shape');
+      setZoneEditing(true);
+      enableVertexEditing();
+    } else {
+      drawnItems.current?.clearLayers();
+      setZoneMode('circle');
+      setZoneEditing(true);
+    }
   };
 
-  // Confirm the radius: this circle IS the alarm zone (not a preview drawn
-  // on top of a separate zone), so turn it directly into a real Leaflet
-  // polygon inside `drawnItems`. That's the same FeatureGroup the edit
-  // toolbar (pencil icon, top-right) is wired to, so afterwards you can
-  // drag individual vertices to reshape it away from a perfect circle —
-  // exactly like editing a manually-drawn zone.
-  const handleConfirmRadius = () => {
+  const handleConfirmZone = () => {
     if (!anchor) return;
-    setRadiusEditable(false);
 
-    const points = circlePolygonPoints(anchor.latitude, anchor.longitude, anchorRadius);
+    let points;
+    if (zoneMode === 'shape') {
+      disableVertexEditing();
+      const polygon = getZonePolygon();
+      // Belt and braces: draw:edited can arrive asynchronously, so take
+      // the vertices straight off the polygon instead of trusting it.
+      points = polygon ? polygonPoints(polygon) : null;
+    } else {
+      points = circlePolygonPoints(anchor.latitude, anchor.longitude, anchorRadius);
+      setZonePolygon(points);
+    }
 
-    drawnItems.current.clearLayers();
-    const polygon = L.polygon(points, {
-      color: '#ff7800',
-      weight: 3,
-      opacity: 0.8,
-      fillOpacity: 0.15,
-      dashArray: '5, 5'
-    });
-    drawnItems.current.addLayer(polygon);
+    if (points && points.length >= 3) onZoneUpdate(points);
+    setZoneEditing(false);
+  };
 
-    onZoneUpdate(points);
+  const handleRaiseAnchor = () => {
+    setConfirmRaiseOpen(false);
+    disableVertexEditing({ save: false });
+    drawnItems.current?.clearLayers();
+    setZoneEditing(false);
+    // Clear the zone as well as the anchor: leaving it behind would keep
+    // the alarm armed on a stale zone while motoring away from it.
+    onZoneUpdate([]);
+    onClearAnchor();
   };
 
   // Keep the popup's button handlers pointing at the latest versions of
   // these functions (the popup itself is created once, outside React).
   useEffect(() => {
-    handleAdjustRadiusRef.current = handleAdjustRadius;
+    handleAdjustRadiusRef.current = handleAdjustZone;
     onClearAnchorRef.current = onClearAnchor;
   });
 
@@ -442,8 +510,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     [zone, anchor, anchorRadius]
   );
 
-  // Armed = anchor set + zone confirmed + not currently re-editing the radius.
-  const armed = Boolean(anchor) && zone && zone.length >= 3 && !radiusEditable;
+  // Armed = anchor set + zone confirmed + not currently editing the zone.
+  const armed = Boolean(anchor) && zone && zone.length >= 3 && !zoneEditing;
 
   const panelState = alarmed
     ? 'danger'
@@ -488,8 +556,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
       <div ref={mapContainer} className="map" />
 
-      {/* Hidden while the radius sheet is up — it would sit under it */}
-      {!radiusEditable && <ThemeToggle theme={theme} onCycle={onCycleTheme} />}
+      {/* Hidden while the zone sheet is up — it would sit under it */}
+      {!zoneEditing && <ThemeToggle theme={theme} onCycle={onCycleTheme} />}
 
       {/* Stage 1 — DROP: one large floating button over the map */}
       {!anchor && (
@@ -498,37 +566,25 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         </button>
       )}
 
-      {/* Stage 2 — SET RADIUS: bottom sheet with slider, two-way synced
-          with the draggable green handle on the map (both go through
-          setAnchorRadius, which useAnchorRadius renders). The map stays
-          interactive behind the sheet so the handle can still be dragged. */}
-      {anchor && radiusEditable && (
-        <div className="radius-sheet">
-          <div className="radius-sheet-value">
-            {anchorRadius}
-            <span className="radius-sheet-unit">m</span>
-          </div>
-          <input
-            type="range"
-            className="radius-slider"
-            min={10}
-            max={100}
-            step={5}
-            value={Math.min(100, Math.max(10, anchorRadius))}
-            onChange={(e) => setAnchorRadius(Number(e.target.value))}
-            aria-label="Zone radius"
-          />
-          <div className="radius-sheet-hint">{t('radiusHint')}</div>
-          <button className="action-btn action-primary radius-arm-btn" onClick={handleConfirmRadius}>
-            {t('armAlarm')}
-          </button>
-        </div>
+      {/* Stage 2 — ZONE: one sheet for both circle and shape editing.
+          The map stays interactive behind it so the green radius handle
+          (circle) and the vertex handles (shape) can still be dragged. */}
+      {anchor && zoneEditing && (
+        <ZoneSheet
+          mode={zoneMode}
+          onModeChange={handleModeChange}
+          radius={anchorRadius}
+          onRadiusChange={setAnchorRadius}
+          onResetToCircle={handleResetToCircle}
+          onConfirm={handleConfirmZone}
+          confirmLabel={initialSetup ? t('armAlarm') : t('done')}
+        />
       )}
 
       {/* Stage 3 — ARMED: bottom action bar */}
       {armed && (
         <div className="action-bar">
-          <button className="action-btn" onClick={handleAdjustRadius}>
+          <button className="action-btn" onClick={handleAdjustZone}>
             {t('adjustZone')}
           </button>
           <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
@@ -544,11 +600,23 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
           confirmLabel={t('raiseAnchor')}
           cancelLabel={t('keepWatching')}
           danger
-          onConfirm={() => {
-            setConfirmRaiseOpen(false);
-            onClearAnchor();
-          }}
+          onConfirm={handleRaiseAnchor}
           onCancel={() => setConfirmRaiseOpen(false)}
+        />
+      )}
+
+      {confirmBackToCircleOpen && (
+        <ConfirmDialog
+          title={t('backToCircleTitle')}
+          message={t('backToCircleMessage')}
+          confirmLabel={t('zoneModeCircle')}
+          cancelLabel={t('keepShape')}
+          danger
+          onConfirm={() => {
+            setConfirmBackToCircleOpen(false);
+            enterCircleMode();
+          }}
+          onCancel={() => setConfirmBackToCircleOpen(false)}
         />
       )}
     </div>

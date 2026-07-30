@@ -78,7 +78,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // on every render.
   const handleAdjustRadiusRef = useRef(() => {});
   const onClearAnchorRef = useRef(() => {});
-  const [status, setStatus] = useState('Initialisation du GPS...');
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
   const [radiusEditable, setRadiusEditable] = useState(false);
   const [copiedSessionId, setCopiedSessionId] = useState(false);
@@ -111,7 +110,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
       const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
       onZoneUpdate(coordinates);
-      setStatus(`Zone créée avec ${coordinates.length} points`);
     }
   };
 
@@ -122,7 +120,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       if (layer instanceof L.Polygon) {
         const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
         onZoneUpdate(coordinates);
-        setStatus(`Zone mise à jour avec ${coordinates.length} points`);
       }
     });
   };
@@ -130,7 +127,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // Handle draw deletion
   const handleDrawDeleted = () => {
     onZoneUpdate([]);
-    setStatus('Zone supprimée');
   };
 
   // Initialize map
@@ -234,10 +230,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     // Get current device's location (should be the boat's location)
     const currentDeviceLocation = Object.values(locations)[0];
 
-    if (!currentDeviceLocation) {
-      setStatus('En attente du signal GPS...');
-      return;
-    }
+    if (!currentDeviceLocation) return;
 
     const { latitude, longitude, accuracy } = currentDeviceLocation;
     const latlng = [latitude, longitude];
@@ -277,8 +270,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       boatMarker.current.openPopup();
       hasCenteredMap.current = true;
     }
-
-    setStatus(`📍 Suivi en cours : ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
   }, [locations]);
 
   // Update anchor marker + chain line to the boat
@@ -399,7 +390,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     drawnItems.current.addLayer(polygon);
 
     onZoneUpdate(points);
-    setStatus(`Zone de mouillage définie (rayon ${anchorRadius} m)`);
   };
 
   // Keep the popup's button handlers pointing at the latest versions of

@@ -58,6 +58,16 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(false);
   const [anchor, setAnchor] = useState(null); // { latitude, longitude, accuracy, timestamp } | null
   const [theme, setTheme] = useState(loadInitialTheme);
+  // Session just created on this (boat) phone: the session screen shows
+  // the share step (ID chip + QR) until the user opens the map.
+  const [createdSessionId, setCreatedSessionId] = useState(null);
+  // ?join=<ID> in the URL (from a scanned QR): auto-join as remote once
+  // the socket connects. Consumed exactly once.
+  const joinParamRef = useRef(
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('join')
+      : null
+  );
   // Monitoring health, surfaced by the status pill
   const [connected, setConnected] = useState(false);
   const [gpsError, setGpsError] = useState(null);
@@ -158,6 +168,16 @@ export default function App() {
       // no longer routes our updates and never checks the alarm.
       if (sessionRef.current) {
         newSocket.emit('join-session', sessionRef.current);
+      } else if (joinParamRef.current) {
+        // Arrived via a scanned QR link (?join=<ID>): join as remote
+        // directly. The 'Session not found' error path returns to the
+        // picker if the code is stale.
+        const joinId = joinParamRef.current.toUpperCase();
+        joinParamRef.current = null;
+        sessionRef.current = { sessionId: joinId, role: 'remote' };
+        setSessionId(joinId);
+        newSocket.emit('join-session', sessionRef.current);
+        setView('remote');
       }
     });
 
@@ -331,7 +351,13 @@ export default function App() {
         throw new Error(`Server responded with ${response.status}`);
       }
       const data = await response.json();
-      handleJoinSession(data.sessionId, 'main');
+      // Join + start tracking right away, but stay on the session screen:
+      // it shows the share step (ID + QR) until "Open the map".
+      setSessionId(data.sessionId);
+      sessionRef.current = { sessionId: data.sessionId, role: 'main' };
+      socket.emit('join-session', sessionRef.current);
+      startGpsTracking();
+      setCreatedSessionId(data.sessionId);
     } catch (err) {
       setError(`Failed to create session: ${err.message}`);
     }
@@ -546,6 +572,7 @@ export default function App() {
     sessionRef.current = null;
     zoneRef.current = [];
     acknowledgedRef.current = false;
+    setCreatedSessionId(null);
     setView('session');
     setSessionId(null);
     setZone([]);
@@ -666,6 +693,9 @@ export default function App() {
         <SessionManager
           onCreateSession={handleCreateSession}
           onJoinSession={handleJoinSession}
+          createdSessionId={createdSessionId}
+          onEnterMap={() => setView('main')}
+          initialJoinId={joinParamRef.current || ''}
         />
       )}
 

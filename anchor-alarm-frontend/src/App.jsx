@@ -142,16 +142,10 @@ export default function App() {
     applyTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]);
   };
 
-  // Auto-switch to night when the alarm arms (anchor set + zone
-  // confirmed). Only on the false→true transition, so the user can still
-  // cycle to any theme afterwards without being fought.
-  const armed = Boolean(anchor) && zone.length >= 3;
-  const wasArmedRef = useRef(false);
-  useEffect(() => {
-    if (armed && !wasArmedRef.current) applyTheme('night');
-    wasArmedRef.current = armed;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armed]);
+  // NOTE: arming deliberately does NOT change the theme. Setting a zone
+  // in daylight used to flip the screen to the night palette, which is
+  // unreadable in sun and surprising. The theme only ever changes when
+  // the user taps the toggle, and that choice persists.
 
 // Create the native notification channel (Android 8+ requires this)
   useEffect(() => {

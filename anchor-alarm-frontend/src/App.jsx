@@ -37,6 +37,18 @@ export default function App() {
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const gpsWatchId = useRef(null);
   const pendingLeaveRef = useRef(null);
+  // Latest locations, readable from socket handlers registered once
+  // (their closures would otherwise see the initial empty state forever).
+  const locationsRef = useRef({});
+  // Current session membership, so we can automatically re-join after a
+  // socket.io reconnection (the server forgets room membership on
+  // disconnect — without re-joining, GPS updates are silently dropped
+  // and the alarm can never fire again).
+  const sessionRef = useRef(null); // { sessionId, role } | null
+
+  useEffect(() => {
+    locationsRef.current = locations;
+  }, [locations]);
 
 // Create the native notification channel (Android 8+ requires this)
   useEffect(() => {
@@ -60,12 +72,19 @@ export default function App() {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5
+      // Never give up reconnecting: a capped attempt count means a long
+      // network outage would permanently disconnect the alarm.
+      reconnectionAttempts: Infinity
     });
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server');
       setError(null);
+      // Re-join the session after a reconnection, otherwise the server
+      // no longer routes our updates and never checks the alarm.
+      if (sessionRef.current) {
+        newSocket.emit('join-session', sessionRef.current);
+      }
     });
 
     newSocket.on('disconnect', () => {
@@ -75,6 +94,13 @@ export default function App() {
     newSocket.on('error', (errorMsg) => {
       console.error('❌ Socket error:', errorMsg);
       setError(`Connection error: ${errorMsg}`);
+      // Joining a non-existent/expired session: go back to the picker
+      // instead of showing an empty monitor that will never update.
+      if (errorMsg === 'Session not found') {
+        sessionRef.current = null;
+        setView('session');
+        setSessionId(null);
+      }
     });
 
     newSocket.on('state-update', (data) => {
@@ -115,9 +141,10 @@ export default function App() {
 
     setSocket(newSocket);
 
-return () => {
+    return () => {
       if (gpsWatchId.current) {
-        Geolocation.clearWatch.removeWatcher({ id: gpsWatchId.current });
+        Geolocation.clearWatch({ id: gpsWatchId.current });
+        gpsWatchId.current = null;
       }
       newSocket.close();
     };
@@ -126,7 +153,7 @@ return () => {
 
 // Trigger alarm with boat data
   const triggerAlarmSequence = async () => {
-    const boatLocation = Object.values(locations)[0];
+    const boatLocation = Object.values(locationsRef.current)[0];
     const locationText = boatLocation
       ? `Lat: ${boatLocation.latitude.toFixed(4)}, Lng: ${boatLocation.longitude.toFixed(4)}`
       : 'Unknown location';
@@ -165,6 +192,7 @@ return () => {
     }
 
     setSessionId(sessionIdInput);
+    sessionRef.current = { sessionId: sessionIdInput, role: roleInput };
 
     socket.emit('join-session', {
       sessionId: sessionIdInput,
@@ -205,6 +233,9 @@ return () => {
       const response = await fetch(`${BACKEND_URL}/api/sessions`, {
         method: 'POST'
       });
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}`);
+      }
       const data = await response.json();
       handleJoinSession(data.sessionId, 'main');
     } catch (err) {
@@ -315,6 +346,7 @@ return () => {
 
   // Reset all session-related state and return to the session picker.
   const resetSessionState = () => {
+    sessionRef.current = null;
     setView('session');
     setSessionId(null);
     setZone([]);
@@ -326,6 +358,7 @@ return () => {
   const leaveMainSession = () => {
     if (gpsWatchId.current) {
       Geolocation.clearWatch({ id: gpsWatchId.current });
+      gpsWatchId.current = null;
     }
     stopAlarm();
     resetSessionState();

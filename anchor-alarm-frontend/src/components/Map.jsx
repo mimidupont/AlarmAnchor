@@ -161,7 +161,9 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
             opacity: 0.8,
             fillOpacity: 0.2
           },
-          showArea: true,
+          // showArea triggers the well-known "type is not defined" crash
+          // in leaflet-draw 1.0.4 with Leaflet 1.8+ while drawing.
+          showArea: false,
           metric: true
         },
         polyline: false,
@@ -377,6 +379,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // drag individual vertices to reshape it away from a perfect circle —
   // exactly like editing a manually-drawn zone.
   const handleConfirmRadius = () => {
+    if (!anchor) return;
     setRadiusEditable(false);
 
     const points = circlePolygonPoints(anchor.latitude, anchor.longitude, anchorRadius);

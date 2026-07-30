@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
@@ -19,8 +20,34 @@ app.use(express.json());
 // Store active sessions: { sessionId: { zone, locations, alarmed, anchor } }
 const sessions = new Map();
 
-// Helper: Generate session ID
-const generateSessionId = () => Math.random().toString(36).substr(2, 9).toUpperCase();
+// Helper: Generate session ID (9 chars, unambiguous alphabet, crypto-random —
+// Math.random().toString(36) could yield short IDs and is guessable)
+const SESSION_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const generateSessionId = () => {
+  const bytes = crypto.randomBytes(9);
+  let id = '';
+  for (const b of bytes) id += SESSION_ID_ALPHABET[b % SESSION_ID_ALPHABET.length];
+  return id;
+};
+
+// Helper: mark a session as recently used (drives expiry)
+const touchSession = (session) => {
+  session.lastActivity = Date.now();
+};
+
+// Helper: minimal shape validation for client-supplied coordinates
+const isValidLocation = (loc) =>
+  loc &&
+  Number.isFinite(loc.latitude) &&
+  Number.isFinite(loc.longitude) &&
+  Math.abs(loc.latitude) <= 90 &&
+  Math.abs(loc.longitude) <= 180;
+
+const isValidZone = (zone) =>
+  Array.isArray(zone) &&
+  zone.every(
+    (p) => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
+  );
 
 // Helper: Check if point is inside polygon using ray casting algorithm
 const isPointInPolygon = (point, polygon) => {
@@ -52,8 +79,12 @@ app.post('/api/sessions', (req, res) => {
     zone: [],
     locations: {},
     alarmed: false,
+    // Once acknowledged, the alarm stays silent until the boat re-enters
+    // the zone (re-arming), instead of re-firing on every GPS fix.
+    acknowledged: false,
     anchor: null,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    lastActivity: Date.now()
   });
 
   res.json({ sessionId });
@@ -94,6 +125,7 @@ io.on('connection', (socket) => {
     socket.join(sessionId);
     socket.sessionId = sessionId;
     socket.role = role;
+    touchSession(session);
 
     console.log(`Client ${socket.id} joined session ${sessionId} as ${role}`);
 
@@ -114,8 +146,9 @@ io.on('connection', (socket) => {
     const { zone } = data;
     const session = sessions.get(socket.sessionId);
 
-    if (session) {
+    if (session && isValidZone(zone)) {
       session.zone = zone;
+      touchSession(session);
       io.to(socket.sessionId).emit('zone-updated', { zone });
     }
   });
@@ -126,8 +159,9 @@ io.on('connection', (socket) => {
     const { anchor } = data;
     const session = sessions.get(socket.sessionId);
 
-    if (session) {
+    if (session && (anchor === null || isValidLocation(anchor))) {
       session.anchor = anchor;
+      touchSession(session);
       io.to(socket.sessionId).emit('anchor-updated', { anchor });
     }
   });
@@ -137,12 +171,17 @@ io.on('connection', (socket) => {
     const { location } = data;
     const session = sessions.get(socket.sessionId);
 
-    if (!session) return;
+    if (!session || !isValidLocation(location)) return;
 
     session.locations[socket.id] = location;
+    touchSession(session);
 
-    // Check if alarm should trigger
-    const shouldAlarm = checkAlarm(location, session.zone);
+    // Check if alarm should trigger. An acknowledged alarm stays silent
+    // while the boat remains outside; returning inside the zone re-arms it.
+    const outsideZone = checkAlarm(location, session.zone);
+    if (!outsideZone) session.acknowledged = false;
+
+    const shouldAlarm = outsideZone && !session.acknowledged;
     const wasAlarmed = session.alarmed;
 
     session.alarmed = shouldAlarm;
@@ -168,6 +207,8 @@ io.on('connection', (socket) => {
     const session = sessions.get(socket.sessionId);
     if (session) {
       session.alarmed = false;
+      session.acknowledged = true;
+      touchSession(session);
       io.to(socket.sessionId).emit('alarm-acknowledged', { alarmed: false });
     }
   });
@@ -192,18 +233,23 @@ io.on('connection', (socket) => {
   });
 });
 
-// Cleanup old sessions every 1 hour
-const oneHour = 60 * 60 * 1000;
+// Cleanup idle sessions. Expiry is based on last activity, NOT creation
+// time — the previous version deleted every session one hour after it was
+// created, so an overnight anchor watch silently lost its session and the
+// alarm could never fire again. A session anchored for days stays alive as
+// long as location updates keep coming in.
+const ONE_HOUR = 60 * 60 * 1000;
+const SESSION_IDLE_TTL = 24 * ONE_HOUR;
 setInterval(() => {
   const now = Date.now();
 
   for (const [sessionId, session] of sessions.entries()) {
-    if (now - session.createdAt > oneHour) {
+    if (now - session.lastActivity > SESSION_IDLE_TTL) {
       sessions.delete(sessionId);
-      console.log(`Cleaned up old session: ${sessionId}`);
+      console.log(`Cleaned up idle session: ${sessionId}`);
     }
   }
-}, oneHour);
+}, ONE_HOUR);
 
 // Health check
 app.get('/health', (req, res) => {

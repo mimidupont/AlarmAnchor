@@ -173,11 +173,33 @@
   text-align: center;
 }
 
-/* ---- Version tag ---- */
+/* ---- Footer: language toggle + version tag ---- */
+
+.footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.lang-toggle {
+  min-height: 44px;
+  padding: 0 14px;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lang-toggle:active {
+  background: var(--border-subtle);
+}
 
 .version-tag {
-  text-align: center;
   font-size: 11px;
   color: var(--text-secondary);
-  margin-top: 4px;
 }

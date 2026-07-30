@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useT } from '../i18n';
 import './Chrome.css';
 
 const STALE_MS = 30 * 1000;
@@ -26,13 +27,14 @@ const WEAK_ACCURACY_M = 25;
  * Tapping the pill opens a sheet listing each subsystem with a status dot.
  */
 export default function StatusPill({ mode, connected, boatLocation, gpsError, armed }) {
+  const t = useT();
   const [sheetOpen, setSheetOpen] = useState(false);
   // Re-evaluate staleness every 5s even without new data.
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 5000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
   }, []);
 
   const fixAt = boatLocation ? Date.parse(boatLocation.timestamp) : null;
@@ -47,45 +49,45 @@ export default function StatusPill({ mode, connected, boatLocation, gpsError, ar
   if (mode === 'remote') {
     if (!connected) {
       state = 'danger';
-      label = 'Offline';
+      label = t('pillOffline');
     } else if (gpsDead) {
       state = 'danger';
-      label = 'No data';
+      label = t('pillNoData');
     } else if (gpsWeak) {
       state = 'warn';
-      label = 'Data stale';
+      label = t('pillDataStale');
     } else if (armed) {
       state = 'ok';
-      label = 'Watching';
+      label = t('pillWatching');
     } else {
       state = 'neutral';
-      label = 'Not armed';
+      label = t('pillNotArmed');
     }
   } else {
     if (gpsDead) {
       state = 'danger';
-      label = 'No GPS';
+      label = t('pillNoGps');
     } else if (gpsWeak) {
       state = 'warn';
-      label = 'GPS weak';
+      label = t('pillGpsWeak');
     } else if (!connected) {
       state = 'warn';
-      label = 'Offline — local only';
+      label = t('pillOfflineLocal');
     } else if (armed) {
       state = 'ok';
-      label = 'Monitoring';
+      label = t('pillMonitoring');
     } else {
       state = 'neutral';
-      label = 'Not armed';
+      label = t('pillNotArmed');
     }
   }
 
   const gpsDetail = () => {
-    if (gpsError) return `Error: ${gpsError}`;
-    if (fixAge === null) return 'No fix yet';
+    if (gpsError) return t('sheetError', { msg: gpsError });
+    if (fixAge === null) return t('sheetNoFix');
     const age = Math.max(0, Math.round(fixAge / 1000));
     const acc = accuracy != null ? ` · ±${Math.round(accuracy)} m` : '';
-    return `Fix ${age}s ago${acc}`;
+    return `${t('sheetFixAgo', { s: age })}${acc}`;
   };
 
   const dot = (ok, warn) => (
@@ -104,24 +106,24 @@ export default function StatusPill({ mode, connected, boatLocation, gpsError, ar
             <div className="status-sheet-row">
               {dot(!gpsDead && !gpsWeak, gpsWeak)}
               <span className="status-sheet-name">
-                {mode === 'remote' ? 'Boat data' : 'GPS'}
+                {mode === 'remote' ? t('sheetBoatData') : t('gpsLabel')}
               </span>
               <span className="status-sheet-detail">{gpsDetail()}</span>
             </div>
             <div className="status-sheet-row">
               {dot(connected, false)}
-              <span className="status-sheet-name">Server</span>
+              <span className="status-sheet-name">{t('sheetServer')}</span>
               <span className="status-sheet-detail">
-                {connected ? 'Connected' : 'Disconnected'}
+                {connected ? t('sheetConnected') : t('sheetDisconnected')}
               </span>
             </div>
             <div className="status-sheet-row">
               {dot(armed, false)}
-              <span className="status-sheet-name">Zone</span>
-              <span className="status-sheet-detail">{armed ? 'Armed' : 'Not armed'}</span>
+              <span className="status-sheet-name">{t('zoneLabel')}</span>
+              <span className="status-sheet-detail">{armed ? t('sheetArmed') : t('sheetNotArmed')}</span>
             </div>
             <button className="status-sheet-close" onClick={() => setSheetOpen(false)}>
-              Close
+              {t('close')}
             </button>
           </div>
         </div>

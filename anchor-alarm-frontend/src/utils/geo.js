@@ -48,6 +48,19 @@ export function isPointInPolygon(point, polygon) {
   return inside;
 }
 
+// Effective alarm-zone radius: max distance from the anchor to any zone
+// vertex. Equals the confirmed circle's radius for generated zones, and a
+// sane "how far out is still safe" approximation for hand-drawn ones.
+export function zoneRadiusMeters(anchor, zone) {
+  if (!anchor || !zone || zone.length < 3) return 0;
+  let max = 0;
+  for (const [lat, lng] of zone) {
+    const d = distanceMeters(anchor.latitude, anchor.longitude, lat, lng);
+    if (d > max) max = d;
+  }
+  return max;
+}
+
 // Given a center point and a distance due east (in meters), return the
 // approximate [lat, lng] of that point. Flat-earth approximation, accurate
 // enough at anchoring distances (tens of meters).

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useT } from '../i18n';
 import './Chrome.css';
 
 /**
@@ -7,6 +8,7 @@ import './Chrome.css';
  * element (the status pill).
  */
 export default function TopStrip({ onBack, sessionId, right }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const timer = useRef(null);
 
@@ -25,11 +27,11 @@ export default function TopStrip({ onBack, sessionId, right }) {
 
   return (
     <div className="top-strip">
-      <button onClick={onBack} className="back-btn" aria-label="Back">
+      <button onClick={onBack} className="back-btn" aria-label={t('back')}>
         ‹
       </button>
       <button className="session-chip" onClick={handleCopy}>
-        {copied ? 'Copied' : sessionId}
+        {copied ? t('copied') : sessionId}
       </button>
       {right}
     </div>

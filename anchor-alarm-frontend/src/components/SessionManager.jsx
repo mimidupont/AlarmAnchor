@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import QrScanner from './QrScanner';
+import { useT } from '../i18n';
 import { APP_VERSION } from '../version';
 import './SessionManager.css';
 
@@ -28,8 +29,11 @@ export default function SessionManager({
   onJoinSession,
   createdSessionId,
   onEnterMap,
-  initialJoinId
+  initialJoinId,
+  lang,
+  onToggleLang
 }) {
+  const t = useT();
   const [sessionIdInput, setSessionIdInput] = useState(initialJoinId || '');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -52,7 +56,7 @@ export default function SessionManager({
   const handleJoin = (id) => {
     const code = parseJoinCode(id ?? sessionIdInput);
     if (!code) {
-      alert('Please enter a valid session ID');
+      alert(t('invalidSessionId'));
       return;
     }
     onJoinSession(code, 'remote');
@@ -85,25 +89,28 @@ export default function SessionManager({
     return (
       <div className="session-manager">
         <div className="session-container">
-          <h1>⚓ Anchor Alarm</h1>
+          <h1>{t('appTitle')}</h1>
 
           <div className="card share-card">
-            <h2>Session created</h2>
+            <h2>{t('sessionCreated')}</h2>
             <button className="share-chip" onClick={handleCopy}>
-              {copied ? 'Copied' : createdSessionId}
+              {copied ? t('copied') : createdSessionId}
             </button>
             <div className="qr-tile">
               <QRCodeSVG value={joinUrlFor(createdSessionId)} size={220} marginSize={2} />
             </div>
-            <p className="card-note">
-              Scan from another phone to watch remotely — or share the ID.
-            </p>
+            <p className="card-note">{t('shareHint')}</p>
             <button className="card-btn card-btn-primary" onClick={onEnterMap}>
-              Open the map
+              {t('openMap')}
             </button>
           </div>
 
-          <div className="version-tag">v{APP_VERSION}</div>
+          <div className="footer-row">
+            <button className="lang-toggle" onClick={onToggleLang}>
+              {lang === 'en' ? 'Français' : 'English'}
+            </button>
+            <span className="version-tag">v{APP_VERSION}</span>
+          </div>
         </div>
       </div>
     );
@@ -113,22 +120,22 @@ export default function SessionManager({
   return (
     <div className="session-manager">
       <div className="session-container">
-        <h1>⚓ Anchor Alarm</h1>
+        <h1>{t('appTitle')}</h1>
 
         <div className="card">
-          <h2>⚓ Start monitoring</h2>
-          <p className="card-note">This phone stays on the boat</p>
+          <h2>{t('startMonitoring')}</h2>
+          <p className="card-note">{t('startMonitoringNote')}</p>
           <button className="card-btn card-btn-primary" onClick={handleCreate} disabled={loading}>
-            {loading ? 'Creating…' : 'Create a session'}
+            {loading ? t('creating') : t('createSession')}
           </button>
         </div>
 
         <div className="card">
-          <h2>👀 Watch remotely</h2>
-          <p className="card-note">Join a session running on the boat</p>
+          <h2>{t('watchRemotely')}</h2>
+          <p className="card-note">{t('watchRemotelyNote')}</p>
           <input
             type="text"
-            placeholder="Session ID"
+            placeholder={t('sessionIdPlaceholder')}
             value={sessionIdInput}
             onChange={(e) => setSessionIdInput(e.target.value.toUpperCase())}
             onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
@@ -140,17 +147,22 @@ export default function SessionManager({
           />
           <div className="join-row">
             <button className="card-btn" onClick={() => handleJoin()}>
-              Join
+              {t('join')}
             </button>
             {canScan && (
               <button className="card-btn" onClick={() => setScanning(true)}>
-                Scan QR
+                {t('scanQr')}
               </button>
             )}
           </div>
         </div>
 
-        <div className="version-tag">v{APP_VERSION}</div>
+        <div className="footer-row">
+            <button className="lang-toggle" onClick={onToggleLang}>
+              {lang === 'en' ? 'Français' : 'English'}
+            </button>
+            <span className="version-tag">v{APP_VERSION}</span>
+          </div>
       </div>
 
       {scanning && <QrScanner onResult={handleScanResult} onClose={handleScanClose} />}

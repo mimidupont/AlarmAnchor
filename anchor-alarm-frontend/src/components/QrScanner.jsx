@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useT } from '../i18n';
 import './SessionManager.css';
 
 /**
@@ -7,6 +8,7 @@ import './SessionManager.css';
  * hides the Scan button otherwise) — no scanner library involved.
  */
 export default function QrScanner({ onResult, onClose }) {
+  const t = useT();
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -52,9 +54,9 @@ export default function QrScanner({ onResult, onClose }) {
     <div className="qr-scanner-overlay" onClick={onClose}>
       <div className="qr-scanner" onClick={(e) => e.stopPropagation()}>
         <video ref={videoRef} className="qr-video" muted playsInline />
-        <p className="qr-hint">Point the camera at the session QR code</p>
+        <p className="qr-hint">{t('scanHint')}</p>
         <button className="card-btn" onClick={onClose}>
-          Cancel
+          {t('cancel')}
         </button>
       </div>
     </div>

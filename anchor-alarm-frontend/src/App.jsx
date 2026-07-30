@@ -20,7 +20,14 @@ import ConfirmDialog from './components/ConfirmDialog';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Geolocation } from '@capacitor/geolocation';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import { isPointInPolygon } from './utils/geo';
 import './App.css';
+
+// Foreground-service GPS watcher (@capacitor-community/background-geolocation).
+// Unlike @capacitor/geolocation, it keeps a fix coming when the screen is off
+// or the app is backgrounded — essential for an overnight anchor watch.
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
@@ -45,10 +52,27 @@ export default function App() {
   // disconnect — without re-joining, GPS updates are silently dropped
   // and the alarm can never fire again).
   const sessionRef = useRef(null); // { sessionId, role } | null
+  // Socket instance, reachable from the long-lived GPS watcher callback.
+  const socketRef = useRef(null);
+  // Local alarm state machine on the boat phone. The GPS callback and the
+  // socket handlers both need the *current* values synchronously, so these
+  // are refs updated at every state transition (not effects).
+  const zoneRef = useRef([]);
+  const alarmedRef = useRef(false);
+  const acknowledgedRef = useRef(false);
 
   useEffect(() => {
     locationsRef.current = locations;
   }, [locations]);
+
+  useEffect(() => {
+    zoneRef.current = zone;
+  }, [zone]);
+
+  const setAlarmedState = (value) => {
+    alarmedRef.current = value;
+    setAlarmed(value);
+  };
 
 // Create the native notification channel (Android 8+ requires this)
   useEffect(() => {
@@ -98,6 +122,7 @@ export default function App() {
       // instead of showing an empty monitor that will never update.
       if (errorMsg === 'Session not found') {
         sessionRef.current = null;
+        stopGpsTracking();
         setView('session');
         setSessionId(null);
       }
@@ -105,13 +130,20 @@ export default function App() {
 
     newSocket.on('state-update', (data) => {
       setZone(data.zone);
-      setLocations(data.locations);
-      setAlarmed(data.alarmed);
+      zoneRef.current = data.zone;
+      // On the boat phone the map is driven directly by the local GPS
+      // watcher; don't let a server snapshot overwrite it.
+      if (sessionRef.current?.role !== 'main') {
+        setLocations(data.locations);
+        alarmedRef.current = data.alarmed;
+        setAlarmed(data.alarmed);
+      }
       setAnchor(data.anchor || null);
     });
 
     newSocket.on('zone-updated', (data) => {
       setZone(data.zone);
+      zoneRef.current = data.zone;
     });
 
     newSocket.on('anchor-updated', (data) => {
@@ -119,33 +151,44 @@ export default function App() {
     });
 
     newSocket.on('location-updated', (data) => {
+      // The boat phone already applied this fix locally (it's our own
+      // echo); only remote monitors consume it.
+      if (sessionRef.current?.role === 'main') return;
       setLocations(prev => ({
         ...prev,
         [data.clientId]: data.location
       }));
+      alarmedRef.current = data.alarmed;
       setAlarmed(data.alarmed);
     });
 
     newSocket.on('alarm-status-changed', (data) => {
-      console.log('🚨 Alarm triggered:', data);
+      console.log('🚨 Alarm status changed:', data);
+      // Don't re-fire the notification/haptics if the local check on the
+      // boat phone already raised this alarm.
+      const alreadyAlarmed = alarmedRef.current;
+      alarmedRef.current = data.alarmed;
       setAlarmed(data.alarmed);
-      if (data.alarmed) {
+      if (data.alarmed && !alreadyAlarmed) {
         triggerAlarmSequence();
       }
     });
 
     newSocket.on('alarm-acknowledged', (data) => {
+      // Someone (possibly on another device) acknowledged: silence the
+      // local alarm too, and keep it silenced until back inside the zone.
+      acknowledgedRef.current = true;
+      alarmedRef.current = data.alarmed;
       setAlarmed(data.alarmed);
       stopAlarm();
     });
 
+    socketRef.current = newSocket;
     setSocket(newSocket);
 
     return () => {
-      if (gpsWatchId.current) {
-        Geolocation.clearWatch({ id: gpsWatchId.current });
-        gpsWatchId.current = null;
-      }
+      stopGpsTracking();
+      socketRef.current = null;
       newSocket.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,7 +244,7 @@ export default function App() {
 
     if (roleInput === 'main') {
       setView('main');
-      startGpsTracking(sessionIdInput);
+      startGpsTracking();
     } else {
       setView('remote');
     }
@@ -243,8 +286,78 @@ export default function App() {
     }
   };
 
-// Start GPS tracking (native, foreground-priority)
-  const startGpsTracking = async (currentSessionId) => {
+  // Every GPS fix on the boat phone goes through here — whether the server
+  // is reachable or not. The zone check runs LOCALLY first, so losing the
+  // internet connection at anchor no longer disables the alarm; the server
+  // round-trip only exists to feed remote monitors.
+  const handleGpsFix = ({ latitude, longitude, accuracy }) => {
+    const location = {
+      latitude,
+      longitude,
+      accuracy,
+      timestamp: new Date().toISOString()
+    };
+
+    // Drive the map/status directly from the local fix (no server echo).
+    setLocations({ boat: location });
+
+    // Local alarm decision, mirroring the server's state machine: alarm
+    // when outside the zone, stay silent after an acknowledgment, re-arm
+    // once back inside.
+    const currentZone = zoneRef.current;
+    if (currentZone && currentZone.length >= 3) {
+      const outside = !isPointInPolygon([latitude, longitude], currentZone);
+      if (!outside) {
+        acknowledgedRef.current = false;
+        if (alarmedRef.current) setAlarmedState(false);
+      } else if (!acknowledgedRef.current && !alarmedRef.current) {
+        setAlarmedState(true);
+        triggerAlarmSequence();
+      }
+    }
+
+    // Best-effort sync to the server for remote monitors.
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('update-location', { location });
+    }
+  };
+
+  // Start GPS tracking. On a real device this uses a foreground service
+  // (persistent notification) so Android keeps delivering fixes with the
+  // screen off; in a browser it falls back to a regular geolocation watch.
+  const startGpsTracking = async () => {
+    await stopGpsTracking();
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const id = await BackgroundGeolocation.addWatcher(
+          {
+            backgroundTitle: 'Alarme de mouillage active',
+            backgroundMessage: 'Surveillance de la position du bateau',
+            requestPermissions: true,
+            stale: false,
+            distanceFilter: 0
+          },
+          (position, err) => {
+            if (err) {
+              console.error('❌ GPS Error:', err);
+              if (err.code === 'NOT_AUTHORIZED') {
+                setError('Permission de localisation refusée — ouvrez les réglages Android pour l\'autoriser');
+              } else {
+                setError(`GPS error: ${err.message}`);
+              }
+              return;
+            }
+            if (position) handleGpsFix(position);
+          }
+        );
+        gpsWatchId.current = { type: 'background', id };
+        return;
+      } catch (err) {
+        console.warn('Background watcher unavailable, falling back:', err);
+      }
+    }
+
     try {
       const permStatus = await Geolocation.requestPermissions();
       if (permStatus.location !== 'granted') {
@@ -264,23 +377,28 @@ export default function App() {
             setError(`GPS error: ${err.message}`);
             return;
           }
-          if (position && socket && currentSessionId) {
-            const { latitude, longitude, accuracy } = position.coords;
-            socket.emit('update-location', {
-              location: {
-                latitude,
-                longitude,
-                accuracy,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
+          if (position) handleGpsFix(position.coords);
         }
       );
-      gpsWatchId.current = watcherId;
+      gpsWatchId.current = { type: 'foreground', id: watcherId };
     } catch (err) {
       console.error('Failed to start GPS tracking:', err);
       setError(`GPS error: ${err.message}`);
+    }
+  };
+
+  const stopGpsTracking = async () => {
+    const watch = gpsWatchId.current;
+    gpsWatchId.current = null;
+    if (!watch) return;
+    try {
+      if (watch.type === 'background') {
+        await BackgroundGeolocation.removeWatcher({ id: watch.id });
+      } else {
+        await Geolocation.clearWatch({ id: watch.id });
+      }
+    } catch (err) {
+      console.warn('Failed to stop GPS watcher:', err);
     }
   };
 
@@ -336,8 +454,12 @@ export default function App() {
     }
   };
 
-  // Acknowledge alarm
+  // Acknowledge alarm: silence it locally right away (works offline) and
+  // tell the server so other devices are silenced too. The local state
+  // machine re-arms once the boat is back inside the zone.
   const handleAcknowledgeAlarm = () => {
+    acknowledgedRef.current = true;
+    setAlarmedState(false);
     stopAlarm();
     if (socket && sessionId) {
       socket.emit('acknowledge-alarm');
@@ -347,19 +469,18 @@ export default function App() {
   // Reset all session-related state and return to the session picker.
   const resetSessionState = () => {
     sessionRef.current = null;
+    zoneRef.current = [];
+    acknowledgedRef.current = false;
     setView('session');
     setSessionId(null);
     setZone([]);
     setLocations({});
-    setAlarmed(false);
+    setAlarmedState(false);
     setAnchor(null);
   };
 
   const leaveMainSession = () => {
-    if (gpsWatchId.current) {
-      Geolocation.clearWatch({ id: gpsWatchId.current });
-      gpsWatchId.current = null;
-    }
+    stopGpsTracking();
     stopAlarm();
     resetSessionState();
   };

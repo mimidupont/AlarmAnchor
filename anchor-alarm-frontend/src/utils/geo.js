@@ -29,6 +29,25 @@ export function bearingToCompass(deg) {
   return dirs[Math.round(deg / 45) % 8];
 }
 
+// Ray-casting point-in-polygon test. `point` is [lat, lng]; `polygon` is an
+// array of [lat, lng] vertices. Same algorithm as the server uses, so the
+// boat phone reaches the same verdict offline as the server does online.
+export function isPointInPolygon(point, polygon) {
+  const [x, y] = point;
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+
+    const intersect =
+      ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
+}
+
 // Given a center point and a distance due east (in meters), return the
 // approximate [lat, lng] of that point. Flat-earth approximation, accurate
 // enough at anchoring distances (tens of meters).

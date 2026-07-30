@@ -1,7 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { distanceMeters, bearingDegrees, bearingToCompass } from '../utils/geo';
+import { distanceMeters, bearingDegrees } from '../utils/geo';
+import TopStrip from './TopStrip';
+import InstrumentPanel from './InstrumentPanel';
+import ThemeToggle from './ThemeToggle';
 import './RemoteMonitor.css';
 
 const BOAT_ICON = L.icon({
@@ -19,7 +22,7 @@ const ANCHOR_ICON = L.divIcon({
   popupAnchor: [0, -15]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack }) {
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const zoneLayer = useRef(null);
@@ -205,67 +208,72 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       ? bearingDegrees(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
       : null;
 
+  // Same effective-radius approximation as the main view: max distance
+  // from anchor to any zone vertex, memoized per zone change.
+  const effectiveRadius = useMemo(() => {
+    if (!anchor || !zone || zone.length < 3) return 0;
+    let max = 0;
+    for (const [lat, lng] of zone) {
+      const d = distanceMeters(anchor.latitude, anchor.longitude, lat, lng);
+      if (d > max) max = d;
+    }
+    return max;
+  }, [zone, anchor]);
+
+  const armed = Boolean(anchor) && zone && zone.length >= 3;
+
+  const panelState = alarmed
+    ? 'danger'
+    : anchorDistance !== null && anchorDistance > 0.8 * effectiveRadius
+      ? 'warn'
+      : 'ok';
+
+  const updatedFooter = boatLocation ? (
+    <div className="instrument-updated">
+      Updated {new Date(boatLocation.timestamp).toLocaleTimeString()}
+    </div>
+  ) : null;
+
   return (
     <div className="remote-monitor">
-      <div className="monitor-header">
-        <div className="header-left">
-          <button onClick={onBack} className="back-btn">← Retour</button>
-          <h2>Suivi à distance</h2>
-        </div>
-        <div className="session-badge">
-          Session : <code>{sessionId}</code>
-        </div>
-      </div>
+      <TopStrip
+        onBack={onBack}
+        sessionId={sessionId}
+        right={<span className="status-pill status-pill-ok">Watching</span>}
+      />
 
-      {boatLocation ? (
-        <div className="boat-info">
-          <div className="info-item">
-            <span className="label">Position :</span>
-            <span className="value">
+      {armed && anchorDistance !== null && (
+        <InstrumentPanel
+          distance={anchorDistance}
+          bearing={anchorBearing}
+          radius={effectiveRadius}
+          accuracy={boatLocation?.accuracy}
+          state={panelState}
+          footer={updatedFooter}
+        />
+      )}
+
+      {boatLocation && !armed && (
+        <div className="instrument-panel">
+          <div className="instrument-readouts">
+            <span>
               {boatLocation.latitude.toFixed(4)}°, {boatLocation.longitude.toFixed(4)}°
             </span>
+            <span>GPS {Math.round(boatLocation.accuracy)} m</span>
           </div>
-          <div className="info-item">
-            <span className="label">Précision :</span>
-            <span className="value">{Math.round(boatLocation.accuracy)} m</span>
-          </div>
-          <div className="info-item">
-            <span className="label">Dernière mise à jour :</span>
-            <span className="value">
-              {new Date(boatLocation.timestamp).toLocaleTimeString('fr-FR')}
-            </span>
-          </div>
-          {anchor && anchorDistance !== null && (
-            <div className="info-item">
-              <span className="label">Distance à l'ancre :</span>
-              <span className="value">
-                {Math.round(anchorDistance)} m · {bearingToCompass(anchorBearing)} ({Math.round(anchorBearing)}°)
-              </span>
-            </div>
-          )}
+          {updatedFooter}
         </div>
-      ) : (
-        <div className="boat-info">
-          <p className="waiting">En attente de la position du bateau...</p>
+      )}
+
+      {!boatLocation && (
+        <div className="instrument-panel instrument-waiting">
+          <div className="instrument-label">Waiting for boat position…</div>
         </div>
       )}
 
       <div ref={mapContainer} className="map" />
 
-      <div className="legend">
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: '#ff4444' }}></span>
-          Position du bateau
-        </div>
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: '#8e44ad' }}></span>
-          Ancre
-        </div>
-        <div className="legend-item">
-          <span className="legend-color" style={{ background: 'rgba(255, 120, 0, 0.15)', border: '2px dashed #ff7800' }}></span>
-          Zone de mouillage
-        </div>
-      </div>
+      <ThemeToggle theme={theme} onCycle={onCycleTheme} />
     </div>
   );
 }

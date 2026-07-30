@@ -5,132 +5,12 @@
   flex-direction: column;
   background-color: var(--bg-app);
   color: var(--text-primary);
+  /* Anchor for the floating theme toggle */
+  position: relative;
 }
 
-/* ---- Top strip (~48px): back · session chip · status pill ---- */
-
-.top-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 48px;
-  padding: 0 8px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-subtle);
-  flex: none;
-}
-
-.back-btn {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  background: none;
-  border: none;
-  border-radius: var(--radius);
-  color: var(--text-primary);
-  font-size: 28px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-}
-
-.back-btn:active {
-  background: var(--border-subtle);
-}
-
-.session-chip {
-  min-height: 44px;
-  padding: 0 14px;
-  background: var(--bg-app);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  color: var(--text-primary);
-  font-family: source-code-pro, Menlo, Monaco, Consolas, monospace;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  cursor: pointer;
-}
-
-.session-chip:active {
-  border-color: var(--text-secondary);
-}
-
-.status-pill {
-  margin-left: auto;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 12px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.status-pill-ok {
-  color: var(--ok);
-  background: var(--ok-bg);
-  border: 1px solid var(--ok-strong);
-}
-
-/* ---- Instrument panel ---- */
-
-.instrument-panel {
-  padding: 10px 16px 12px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: center;
-  flex: none;
-}
-
-.instrument-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.instrument-value {
-  font-size: 56px;
-  font-weight: 500;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-
-.instrument-unit {
-  font-size: 22px;
-  font-weight: 400;
-  margin-left: 4px;
-  color: var(--text-secondary);
-}
-
-.instrument-ok .instrument-value {
-  color: var(--ok);
-}
-
-.instrument-warn .instrument-value {
-  color: var(--warn);
-}
-
-.instrument-danger .instrument-value {
-  color: var(--danger);
-}
-
-.instrument-danger {
-  background: var(--danger-bg);
-}
-
-.instrument-readouts {
-  display: flex;
-  justify-content: center;
-  gap: 18px;
-  margin-top: 2px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-.instrument-waiting {
-  padding: 14px 16px;
-}
+/* Top strip + instrument panel styles live in Chrome.css (shared with
+   the remote monitor). */
 
 /* ---- Map: everything that's left ---- */
 
@@ -241,9 +121,9 @@
 }
 
 .popup-actions button {
-  background: #f0f0f0;
-  color: #333;
-  border: none;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
   padding: 8px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -252,11 +132,11 @@
 }
 
 .popup-actions button:active {
-  background: #e0e0e0;
+  background: var(--border-subtle);
 }
 
 .popup-clear-anchor {
-  color: #c0392b;
+  color: var(--danger);
 }
 
 /* Draggable handle on the edge of the anchor radius circle */

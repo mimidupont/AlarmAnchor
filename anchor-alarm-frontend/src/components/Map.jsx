@@ -4,8 +4,11 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
-import { distanceMeters, bearingDegrees, bearingToCompass, circlePolygonPoints } from '../utils/geo';
+import { distanceMeters, bearingDegrees, circlePolygonPoints } from '../utils/geo';
 import ConfirmDialog from './ConfirmDialog';
+import TopStrip from './TopStrip';
+import InstrumentPanel from './InstrumentPanel';
+import ThemeToggle from './ThemeToggle';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
@@ -52,7 +55,7 @@ const ANCHOR_ICON = L.divIcon({
 // Default scope: middle of the common 15-35m chain range.
 const DEFAULT_ANCHOR_RADIUS = 25;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -80,9 +83,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const onClearAnchorRef = useRef(() => {});
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
   const [radiusEditable, setRadiusEditable] = useState(false);
-  const [copiedSessionId, setCopiedSessionId] = useState(false);
   const [confirmRaiseOpen, setConfirmRaiseOpen] = useState(false);
-  const copiedTimer = useRef(null);
 
   // Draws the (optionally draggable) radius circle around the anchor.
   useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, radiusEditable);
@@ -432,55 +433,25 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       ? 'warn'
       : 'ok';
 
-  // "042° NE"
-  const formattedBearing =
-    anchorBearing !== null
-      ? `${String(Math.round(anchorBearing) % 360).padStart(3, '0')}° ${bearingToCompass(anchorBearing)}`
-      : null;
-
-  const handleCopySessionId = async () => {
-    try {
-      await navigator.clipboard.writeText(sessionId);
-      setCopiedSessionId(true);
-      clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopiedSessionId(false), 1500);
-    } catch (err) {
-      console.warn('Clipboard copy failed:', err);
-    }
-  };
-
-  useEffect(() => () => clearTimeout(copiedTimer.current), []);
-
   return (
     <div className="map-container">
-      {/* Compact top strip: back, tap-to-copy session ID, status pill */}
-      <div className="top-strip">
-        <button onClick={onBack} className="back-btn" aria-label="Back">
-          ‹
-        </button>
-        <button className="session-chip" onClick={handleCopySessionId}>
-          {copiedSessionId ? 'Copied' : sessionId}
-        </button>
-        {/* Placeholder pill — becomes live connection/GPS health in Phase 3 */}
-        <span className="status-pill status-pill-ok">Monitoring</span>
-      </div>
+      {/* Compact top strip: back, tap-to-copy session ID, status pill.
+          Placeholder pill — becomes live connection/GPS health in Phase 3 */}
+      <TopStrip
+        onBack={onBack}
+        sessionId={sessionId}
+        right={<span className="status-pill status-pill-ok">Monitoring</span>}
+      />
 
       {/* Instrument panel — only in the armed state */}
       {armed && anchorDistance !== null && (
-        <div className={`instrument-panel instrument-${panelState}`}>
-          <div className="instrument-label">Distance to anchor</div>
-          <div className="instrument-value">
-            {Math.round(anchorDistance)}
-            <span className="instrument-unit">m</span>
-          </div>
-          <div className="instrument-readouts">
-            <span>{formattedBearing}</span>
-            <span>Zone {Math.round(effectiveRadius)} m</span>
-            <span>
-              GPS {boatLocation?.accuracy != null ? `${Math.round(boatLocation.accuracy)} m` : '—'}
-            </span>
-          </div>
-        </div>
+        <InstrumentPanel
+          distance={anchorDistance}
+          bearing={anchorBearing}
+          radius={effectiveRadius}
+          accuracy={boatLocation?.accuracy}
+          state={panelState}
+        />
       )}
 
       {/* GPS-wait placeholder line (the old status bar is gone) */}
@@ -491,6 +462,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       )}
 
       <div ref={mapContainer} className="map" />
+
+      <ThemeToggle theme={theme} onCycle={onCycleTheme} />
 
       {/* Bottom action bar */}
       <div className="action-bar">

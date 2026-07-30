@@ -64,3 +64,54 @@
 [data-theme='red'] .leaflet-tile-pane {
   filter: sepia(1) hue-rotate(-30deg) saturate(2.2) brightness(0.5);
 }
+
+/*
+ * Leaflet chrome (zoom bar, popups, attribution, draw toolbar) follows
+ * the theme too — red mode especially must not flash white/blue panels.
+ */
+/* background-color, not the background shorthand — the draw toolbar's
+   buttons carry their icon spritesheet as a background-image, and the
+   shorthand would wipe it. */
+[data-theme='night'] .leaflet-bar a,
+[data-theme='red'] .leaflet-bar a {
+  background-color: var(--bg-panel);
+  color: var(--text-primary);
+  border-bottom-color: var(--border-subtle);
+}
+
+[data-theme='night'] .leaflet-popup-content-wrapper,
+[data-theme='night'] .leaflet-popup-tip,
+[data-theme='red'] .leaflet-popup-content-wrapper,
+[data-theme='red'] .leaflet-popup-tip {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+[data-theme='night'] .leaflet-popup-close-button,
+[data-theme='red'] .leaflet-popup-close-button {
+  color: var(--text-secondary);
+}
+
+[data-theme='night'] .leaflet-control-attribution,
+[data-theme='red'] .leaflet-control-attribution {
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text-secondary);
+}
+[data-theme='night'] .leaflet-control-attribution a,
+[data-theme='red'] .leaflet-control-attribution a {
+  color: var(--text-secondary);
+}
+
+/* leaflet-draw's icons are a baked sprite (dark glyphs on white); filter
+   the whole toolbar to fit each dark theme. The buttons are forced back
+   to a white base first — the generic .leaflet-bar a dark tint above
+   would otherwise get double-inverted into light-on-light. */
+[data-theme='night'] .leaflet-draw-toolbar a,
+[data-theme='red'] .leaflet-draw-toolbar a {
+  background-color: #ffffff;
+}
+[data-theme='night'] .leaflet-draw-toolbar {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9);
+}
+[data-theme='red'] .leaflet-draw-toolbar {
+  filter: grayscale(1) invert(1) sepia(1) saturate(4) hue-rotate(-50deg) brightness(0.75);
+}

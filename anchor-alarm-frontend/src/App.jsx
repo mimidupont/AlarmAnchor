@@ -31,6 +31,22 @@ const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
+const THEMES = ['day', 'night', 'red'];
+
+// localStorage persistence is web-only (nice-to-have); the Capacitor
+// build just starts from the default and keeps theme in React state.
+const loadInitialTheme = () => {
+  try {
+    if (!Capacitor.isNativePlatform()) {
+      const stored = localStorage.getItem('theme');
+      if (THEMES.includes(stored)) return stored;
+    }
+  } catch (err) {
+    // Storage unavailable (private mode etc.) — fall through to default.
+  }
+  return 'day';
+};
+
 export default function App() {
   const [view, setView] = useState('session'); // 'session', 'main', 'remote'
   const [sessionId, setSessionId] = useState(null);
@@ -41,6 +57,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
   const [anchor, setAnchor] = useState(null); // { latitude, longitude, accuracy, timestamp } | null
+  const [theme, setTheme] = useState(loadInitialTheme);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const gpsWatchId = useRef(null);
   const pendingLeaveRef = useRef(null);
@@ -78,6 +95,30 @@ export default function App() {
     alarmedRef.current = value;
     setAlarmed(value);
   };
+
+  const applyTheme = (next) => {
+    setTheme(next);
+    try {
+      if (!Capacitor.isNativePlatform()) localStorage.setItem('theme', next);
+    } catch (err) {
+      // Persistence is best-effort only.
+    }
+  };
+
+  const cycleTheme = () => {
+    applyTheme(THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]);
+  };
+
+  // Auto-switch to night when the alarm arms (anchor set + zone
+  // confirmed). Only on the false→true transition, so the user can still
+  // cycle to any theme afterwards without being fought.
+  const armed = Boolean(anchor) && zone.length >= 3;
+  const wasArmedRef = useRef(false);
+  useEffect(() => {
+    if (armed && !wasArmedRef.current) applyTheme('night');
+    wasArmedRef.current = armed;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armed]);
 
 // Create the native notification channel (Android 8+ requires this)
   useEffect(() => {
@@ -539,9 +580,7 @@ export default function App() {
   };
 
   return (
-    // data-theme is fixed to "night" for now; Phase 2 of the UI redesign
-    // adds the day/night/red toggle and auto-switching.
-    <div className="app" data-theme="night">
+    <div className="app" data-theme={theme}>
       {/* Error banner */}
       {error && (
         <div className="error-banner">
@@ -632,6 +671,8 @@ export default function App() {
           onZoneUpdate={handleZoneUpdate}
           role="main"
           alarmed={alarmed}
+          theme={theme}
+          onCycleTheme={cycleTheme}
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}
@@ -646,6 +687,9 @@ export default function App() {
           locations={locations}
           sessionId={sessionId}
           anchor={anchor}
+          alarmed={alarmed}
+          theme={theme}
+          onCycleTheme={cycleTheme}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}

@@ -1,0 +1,34 @@
+# Fly.io config for the anchor-alarm backend.
+#
+# IMPORTANT: sessions are stored in memory, so this app MUST run as a
+# single machine. Never `fly scale count 2` — a second machine would
+# receive joins for sessions it doesn't know about. For the same reason
+# the machine is always-on (auto_stop = "off"): stopping it would wipe
+# every active anchor watch.
+
+app = "alarmanchor-backend"
+primary_region = "cdg" # Paris — pick the region closest to your cruising grounds
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Never stop the machine: in-memory sessions + an alarm that must not
+  # cold-start. One shared-cpu-1x/256MB always-on machine fits the free
+  # allowance.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

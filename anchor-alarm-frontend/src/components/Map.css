@@ -3,151 +3,100 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: #f5f5f5;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  /* Anchor for the floating theme toggle */
+  position: relative;
 }
 
-.map-header {
-  background: white;
-  padding: 16px 20px;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
+/* Top strip + instrument panel styles live in Chrome.css (shared with
+   the remote monitor). */
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+/* ---- Map: everything that's left ---- */
+
+/* Scoped under .map-container: RemoteMonitor.css also styles a `.map`
+   class and would otherwise override these (same specificity, later in
+   the bundle). */
+.map-container .map {
   flex: 1;
-}
-
-.back-btn {
-  background: none;
-  border: none;
-  font-size: 16px;
-  cursor: pointer;
-  color: #667eea;
-  font-weight: 600;
-  padding: 8px 12px;
-  border-radius: 6px;
-  transition: all 0.3s;
-}
-
-.back-btn:hover {
-  background: #f0f0f0;
-  color: #764ba2;
-}
-
-.map-header h2 {
-  font-size: 20px;
-  color: #333;
-  margin: 0;
-}
-
-.session-badge {
-  background: #f0f0f0;
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 13px;
-  color: #666;
-  white-space: nowrap;
-}
-
-.session-badge code {
-  background: white;
-  padding: 2px 8px;
-  border-radius: 4px;
-  margin-left: 6px;
-  font-weight: 600;
-  font-family: 'Courier New', monospace;
-  color: #667eea;
-}
-
-.status-bar {
-  background: white;
-  padding: 12px 20px;
-  border-bottom: 1px solid #ddd;
-  font-size: 13px;
-  color: #666;
-}
-
-.status-text {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.anchor-bar {
-  background: white;
-  padding: 10px 20px;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.drop-anchor-btn {
-  background: linear-gradient(135deg, #8e44ad 0%, #6c3483 100%);
-  color: white;
-  border: none;
-  padding: 10px 18px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.drop-anchor-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(142, 68, 173, 0.4);
-}
-
-.anchor-info {
-  font-size: 13px;
-  color: #333;
-  font-weight: 500;
-}
-
-.map {
-  flex: 1;
-  background-color: #dce4f5;
+  min-height: 0;
+  background-color: var(--bg-map);
   position: relative;
   z-index: 1;
 }
 
-.map :global(.leaflet-container) {
-  font-family: inherit;
-}
+/* ---- Bottom action bar ---- */
 
-.map :global(.leaflet-control-draw) {
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-
-.map :global(.leaflet-draw-toolbar a) {
-  width: 36px;
-  height: 36px;
-  background-color: white;
-  border-radius: 4px;
+.action-bar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #333;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-subtle);
+  flex: none;
+}
+
+.action-bar:empty {
+  display: none;
+}
+
+.action-btn {
+  flex: 1;
+  min-height: 48px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 15px;
   font-weight: 600;
-  transition: all 0.2s;
+  cursor: pointer;
 }
 
-.map :global(.leaflet-draw-toolbar a:hover) {
-  background-color: #f5f5f5;
-  color: #667eea;
+.action-btn:active {
+  background: var(--border-subtle);
 }
 
-.map :global(.leaflet-popup-content-wrapper) {
-  border-radius: 8px;
+.action-primary {
+  background: var(--ok-strong);
+  border-color: var(--ok-strong);
+  color: #ffffff;
+}
+
+.action-danger {
+  background: none;
+  border-color: var(--danger-strong);
+  color: var(--danger);
+}
+
+.action-danger:active {
+  background: var(--danger-bg);
+}
+
+.radius-info {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding-left: 4px;
+}
+
+.radius-info strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Leaflet chrome ---- */
+
+.map-container .map .leaflet-container {
+  font-family: inherit;
+  /* Leaflet's own default is a light grey; keep gaps/unloaded tiles in
+     the theme's map tone instead. */
+  background: var(--bg-map);
+}
+
+.map .leaflet-popup-content-wrapper {
+  border-radius: var(--radius);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
@@ -172,23 +121,22 @@
 }
 
 .popup-actions button {
-  background: #f0f0f0;
-  color: #333;
-  border: none;
-  padding: 6px 10px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  padding: 8px 10px;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s;
 }
 
-.popup-actions button:hover {
-  background: #e0e0e0;
+.popup-actions button:active {
+  background: var(--border-subtle);
 }
 
 .popup-clear-anchor {
-  color: #c0392b;
+  color: var(--danger);
 }
 
 /* Draggable handle on the edge of the anchor radius circle */
@@ -204,31 +152,4 @@
 
 .radius-handle:active {
   cursor: grabbing;
-}
-
-@media (max-width: 768px) {
-  .map-header {
-    flex-direction: column;
-    gap: 12px;
-    align-items: flex-start;
-  }
-
-  .header-left {
-    width: 100%;
-  }
-
-  .session-badge {
-    width: 100%;
-    text-align: center;
-  }
-
-  .anchor-bar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .map-header h2 {
-    font-size: 18px;
-  }
 }

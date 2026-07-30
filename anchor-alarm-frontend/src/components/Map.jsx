@@ -1,10 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
-import { distanceMeters, bearingDegrees, bearingToCompass, circlePolygonPoints } from '../utils/geo';
+import { distanceMeters, bearingDegrees, circlePolygonPoints } from '../utils/geo';
+import ConfirmDialog from './ConfirmDialog';
+import TopStrip from './TopStrip';
+import InstrumentPanel from './InstrumentPanel';
+import ThemeToggle from './ThemeToggle';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
@@ -51,7 +55,7 @@ const ANCHOR_ICON = L.divIcon({
 // Default scope: middle of the common 15-35m chain range.
 const DEFAULT_ANCHOR_RADIUS = 25;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -77,9 +81,9 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // on every render.
   const handleAdjustRadiusRef = useRef(() => {});
   const onClearAnchorRef = useRef(() => {});
-  const [status, setStatus] = useState('Initialisation du GPS...');
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
   const [radiusEditable, setRadiusEditable] = useState(false);
+  const [confirmRaiseOpen, setConfirmRaiseOpen] = useState(false);
 
   // Draws the (optionally draggable) radius circle around the anchor.
   useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, radiusEditable);
@@ -107,7 +111,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
       const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
       onZoneUpdate(coordinates);
-      setStatus(`Zone créée avec ${coordinates.length} points`);
     }
   };
 
@@ -118,7 +121,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       if (layer instanceof L.Polygon) {
         const coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
         onZoneUpdate(coordinates);
-        setStatus(`Zone mise à jour avec ${coordinates.length} points`);
       }
     });
   };
@@ -126,7 +128,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // Handle draw deletion
   const handleDrawDeleted = () => {
     onZoneUpdate([]);
-    setStatus('Zone supprimée');
   };
 
   // Initialize map
@@ -230,10 +231,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     // Get current device's location (should be the boat's location)
     const currentDeviceLocation = Object.values(locations)[0];
 
-    if (!currentDeviceLocation) {
-      setStatus('En attente du signal GPS...');
-      return;
-    }
+    if (!currentDeviceLocation) return;
 
     const { latitude, longitude, accuracy } = currentDeviceLocation;
     const latlng = [latitude, longitude];
@@ -273,8 +271,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       boatMarker.current.openPopup();
       hasCenteredMap.current = true;
     }
-
-    setStatus(`📍 Suivi en cours : ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
   }, [locations]);
 
   // Update anchor marker + chain line to the boat
@@ -395,7 +391,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     drawnItems.current.addLayer(polygon);
 
     onZoneUpdate(points);
-    setStatus(`Zone de mouillage définie (rayon ${anchorRadius} m)`);
   };
 
   // Keep the popup's button handlers pointing at the latest versions of
@@ -415,51 +410,106 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       ? bearingDegrees(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
       : null;
 
+  // Alarm-zone size used for the warn threshold. For the confirmed circle
+  // the max vertex distance equals anchorRadius; for a hand-drawn/edited
+  // polygon it's a sane approximation of "how far out is still safe".
+  // Recomputed only when the zone or anchor changes.
+  const effectiveRadius = useMemo(() => {
+    if (!anchor || !zone || zone.length < 3) return anchorRadius;
+    let max = 0;
+    for (const [lat, lng] of zone) {
+      const d = distanceMeters(anchor.latitude, anchor.longitude, lat, lng);
+      if (d > max) max = d;
+    }
+    return max;
+  }, [zone, anchor, anchorRadius]);
+
+  // Armed = anchor set + zone confirmed + not currently re-editing the radius.
+  const armed = Boolean(anchor) && zone && zone.length >= 3 && !radiusEditable;
+
+  const panelState = alarmed
+    ? 'danger'
+    : anchorDistance !== null && anchorDistance > 0.8 * effectiveRadius
+      ? 'warn'
+      : 'ok';
+
   return (
     <div className="map-container">
-      <div className="map-header">
-        <div className="header-left">
-          <button onClick={onBack} className="back-btn">← Retour</button>
-          <h2>Suivi du mouillage</h2>
-        </div>
-        <div className="session-badge">
-          Session : <code>{sessionId}</code>
-        </div>
-      </div>
+      {/* Compact top strip: back, tap-to-copy session ID, status pill.
+          Placeholder pill — becomes live connection/GPS health in Phase 3 */}
+      <TopStrip
+        onBack={onBack}
+        sessionId={sessionId}
+        right={<span className="status-pill status-pill-ok">Monitoring</span>}
+      />
 
-      <div className="status-bar">
-        <span className="status-text">{status}</span>
-      </div>
+      {/* Instrument panel — only in the armed state */}
+      {armed && anchorDistance !== null && (
+        <InstrumentPanel
+          distance={anchorDistance}
+          bearing={anchorBearing}
+          radius={effectiveRadius}
+          accuracy={boatLocation?.accuracy}
+          state={panelState}
+        />
+      )}
 
-      <div className="anchor-bar">
+      {/* GPS-wait placeholder line (the old status bar is gone) */}
+      {!boatLocation && (
+        <div className="instrument-panel instrument-waiting">
+          <div className="instrument-label">Waiting for GPS signal…</div>
+        </div>
+      )}
+
+      <div ref={mapContainer} className="map" />
+
+      <ThemeToggle theme={theme} onCycle={onCycleTheme} />
+
+      {/* Bottom action bar */}
+      <div className="action-bar">
         {!anchor && (
-          <button className="drop-anchor-btn" onClick={handleDropAnchorClick}>
-            ⚓ Mouiller l'ancre
+          <button className="action-btn action-primary" onClick={handleDropAnchorClick}>
+            ⚓ Drop anchor
           </button>
         )}
 
         {anchor && radiusEditable && (
           <>
-            <span className="anchor-info">
-              Rayon de la zone : <strong>{anchorRadius} m</strong> — glissez le point vert sur la carte
+            <span className="radius-info">
+              Radius <strong>{anchorRadius} m</strong> — drag the green handle
             </span>
-            <button className="drop-anchor-btn" onClick={handleConfirmRadius}>
-              ⚓ Valider la zone
+            <button className="action-btn action-primary" onClick={handleConfirmRadius}>
+              Arm alarm
             </button>
           </>
         )}
 
-        {anchor && !radiusEditable && (
-          <span className="anchor-info">
-            ⚓ Ancre posée
-            {anchorDistance !== null
-              ? ` · ${Math.round(anchorDistance)} m · ${bearingToCompass(anchorBearing)} (${Math.round(anchorBearing)}°)`
-              : ''}
-          </span>
+        {armed && (
+          <>
+            <button className="action-btn" onClick={handleAdjustRadius}>
+              Adjust zone
+            </button>
+            <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
+              Raise anchor
+            </button>
+          </>
         )}
       </div>
 
-      <div ref={mapContainer} className="map" />
+      {confirmRaiseOpen && (
+        <ConfirmDialog
+          title="Raise anchor?"
+          message="This clears the anchor position and disarms the alarm."
+          confirmLabel="Raise anchor"
+          cancelLabel="Keep watching"
+          danger
+          onConfirm={() => {
+            setConfirmRaiseOpen(false);
+            onClearAnchor();
+          }}
+          onCancel={() => setConfirmRaiseOpen(false)}
+        />
+      )}
     </div>
   );
 }

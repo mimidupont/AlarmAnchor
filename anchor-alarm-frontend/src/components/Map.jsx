@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
 import { distanceMeters, bearingDegrees, bearingToCompass, circlePolygonPoints } from '../utils/geo';
+import ConfirmDialog from './ConfirmDialog';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
@@ -51,7 +52,7 @@ const ANCHOR_ICON = L.divIcon({
 // Default scope: middle of the common 15-35m chain range.
 const DEFAULT_ANCHOR_RADIUS = 25;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -80,6 +81,9 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const [status, setStatus] = useState('Initialisation du GPS...');
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
   const [radiusEditable, setRadiusEditable] = useState(false);
+  const [copiedSessionId, setCopiedSessionId] = useState(false);
+  const [confirmRaiseOpen, setConfirmRaiseOpen] = useState(false);
+  const copiedTimer = useRef(null);
 
   // Draws the (optionally draggable) radius circle around the anchor.
   useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, radiusEditable);
@@ -415,51 +419,134 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       ? bearingDegrees(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
       : null;
 
+  // Alarm-zone size used for the warn threshold. For the confirmed circle
+  // the max vertex distance equals anchorRadius; for a hand-drawn/edited
+  // polygon it's a sane approximation of "how far out is still safe".
+  // Recomputed only when the zone or anchor changes.
+  const effectiveRadius = useMemo(() => {
+    if (!anchor || !zone || zone.length < 3) return anchorRadius;
+    let max = 0;
+    for (const [lat, lng] of zone) {
+      const d = distanceMeters(anchor.latitude, anchor.longitude, lat, lng);
+      if (d > max) max = d;
+    }
+    return max;
+  }, [zone, anchor, anchorRadius]);
+
+  // Armed = anchor set + zone confirmed + not currently re-editing the radius.
+  const armed = Boolean(anchor) && zone && zone.length >= 3 && !radiusEditable;
+
+  const panelState = alarmed
+    ? 'danger'
+    : anchorDistance !== null && anchorDistance > 0.8 * effectiveRadius
+      ? 'warn'
+      : 'ok';
+
+  // "042° NE"
+  const formattedBearing =
+    anchorBearing !== null
+      ? `${String(Math.round(anchorBearing) % 360).padStart(3, '0')}° ${bearingToCompass(anchorBearing)}`
+      : null;
+
+  const handleCopySessionId = async () => {
+    try {
+      await navigator.clipboard.writeText(sessionId);
+      setCopiedSessionId(true);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopiedSessionId(false), 1500);
+    } catch (err) {
+      console.warn('Clipboard copy failed:', err);
+    }
+  };
+
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
+
   return (
     <div className="map-container">
-      <div className="map-header">
-        <div className="header-left">
-          <button onClick={onBack} className="back-btn">← Retour</button>
-          <h2>Suivi du mouillage</h2>
-        </div>
-        <div className="session-badge">
-          Session : <code>{sessionId}</code>
-        </div>
+      {/* Compact top strip: back, tap-to-copy session ID, status pill */}
+      <div className="top-strip">
+        <button onClick={onBack} className="back-btn" aria-label="Back">
+          ‹
+        </button>
+        <button className="session-chip" onClick={handleCopySessionId}>
+          {copiedSessionId ? 'Copied' : sessionId}
+        </button>
+        {/* Placeholder pill — becomes live connection/GPS health in Phase 3 */}
+        <span className="status-pill status-pill-ok">Monitoring</span>
       </div>
 
-      <div className="status-bar">
-        <span className="status-text">{status}</span>
-      </div>
+      {/* Instrument panel — only in the armed state */}
+      {armed && anchorDistance !== null && (
+        <div className={`instrument-panel instrument-${panelState}`}>
+          <div className="instrument-label">Distance to anchor</div>
+          <div className="instrument-value">
+            {Math.round(anchorDistance)}
+            <span className="instrument-unit">m</span>
+          </div>
+          <div className="instrument-readouts">
+            <span>{formattedBearing}</span>
+            <span>Zone {Math.round(effectiveRadius)} m</span>
+            <span>
+              GPS {boatLocation?.accuracy != null ? `${Math.round(boatLocation.accuracy)} m` : '—'}
+            </span>
+          </div>
+        </div>
+      )}
 
-      <div className="anchor-bar">
+      {/* GPS-wait placeholder line (the old status bar is gone) */}
+      {!boatLocation && (
+        <div className="instrument-panel instrument-waiting">
+          <div className="instrument-label">Waiting for GPS signal…</div>
+        </div>
+      )}
+
+      <div ref={mapContainer} className="map" />
+
+      {/* Bottom action bar */}
+      <div className="action-bar">
         {!anchor && (
-          <button className="drop-anchor-btn" onClick={handleDropAnchorClick}>
-            ⚓ Mouiller l'ancre
+          <button className="action-btn action-primary" onClick={handleDropAnchorClick}>
+            ⚓ Drop anchor
           </button>
         )}
 
         {anchor && radiusEditable && (
           <>
-            <span className="anchor-info">
-              Rayon de la zone : <strong>{anchorRadius} m</strong> — glissez le point vert sur la carte
+            <span className="radius-info">
+              Radius <strong>{anchorRadius} m</strong> — drag the green handle
             </span>
-            <button className="drop-anchor-btn" onClick={handleConfirmRadius}>
-              ⚓ Valider la zone
+            <button className="action-btn action-primary" onClick={handleConfirmRadius}>
+              Arm alarm
             </button>
           </>
         )}
 
-        {anchor && !radiusEditable && (
-          <span className="anchor-info">
-            ⚓ Ancre posée
-            {anchorDistance !== null
-              ? ` · ${Math.round(anchorDistance)} m · ${bearingToCompass(anchorBearing)} (${Math.round(anchorBearing)}°)`
-              : ''}
-          </span>
+        {armed && (
+          <>
+            <button className="action-btn" onClick={handleAdjustRadius}>
+              Adjust zone
+            </button>
+            <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
+              Raise anchor
+            </button>
+          </>
         )}
       </div>
 
-      <div ref={mapContainer} className="map" />
+      {confirmRaiseOpen && (
+        <ConfirmDialog
+          title="Raise anchor?"
+          message="This clears the anchor position and disarms the alarm."
+          confirmLabel="Raise anchor"
+          cancelLabel="Keep watching"
+          danger
+          onConfirm={() => {
+            setConfirmRaiseOpen(false);
+            onClearAnchor();
+          }}
+          onCancel={() => setConfirmRaiseOpen(false)}
+        />
+      )}
     </div>
   );
 }

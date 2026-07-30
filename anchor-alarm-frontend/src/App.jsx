@@ -54,6 +54,11 @@ export default function App() {
   const sessionRef = useRef(null); // { sessionId, role } | null
   // Socket instance, reachable from the long-lived GPS watcher callback.
   const socketRef = useRef(null);
+  // Most recent GPS fix from the watcher, with arrival time. Used to drop
+  // the anchor instantly from the live watch instead of requesting a
+  // second concurrent fix (which is slow, and starves entirely with an
+  // active watch in some environments).
+  const lastFixRef = useRef(null);
   // Local alarm state machine on the boat phone. The GPS callback and the
   // socket handlers both need the *current* values synchronously, so these
   // are refs updated at every state transition (not effects).
@@ -297,6 +302,7 @@ export default function App() {
       accuracy,
       timestamp: new Date().toISOString()
     };
+    lastFixRef.current = { ...location, receivedAt: Date.now() };
 
     // Drive the map/status directly from the local fix (no server echo).
     setLocations({ boat: location });
@@ -359,10 +365,17 @@ export default function App() {
     }
 
     try {
-      const permStatus = await Geolocation.requestPermissions();
-      if (permStatus.location !== 'granted') {
-        setError('Location permission was not granted');
-        return;
+      // requestPermissions throws "Unimplemented" in browsers (the browser
+      // shows its own prompt on first geolocation use) — don't let that
+      // abort tracking.
+      try {
+        const permStatus = await Geolocation.requestPermissions();
+        if (permStatus.location !== 'granted') {
+          setError('Location permission was not granted');
+          return;
+        }
+      } catch (permErr) {
+        console.warn('Permission pre-request unavailable, continuing:', permErr);
       }
 
       const watcherId = await Geolocation.watchPosition(
@@ -415,26 +428,40 @@ export default function App() {
   // you typically pay out 15-35m of chain after dropping).
   const handleDropAnchor = async () => {
     try {
-      const permStatus = await Geolocation.checkPermissions();
-      if (permStatus.location !== 'granted') {
-        const req = await Geolocation.requestPermissions();
-        if (req.location !== 'granted') {
-          setError("Permission de localisation refusée, impossible de poser l'ancre");
-          return;
+      let anchorData;
+      const lastFix = lastFixRef.current;
+
+      if (lastFix && Date.now() - lastFix.receivedAt < 10000) {
+        // The live high-accuracy watch already has a fresh fix — use it
+        // directly (instant, and avoids a second concurrent GPS request).
+        anchorData = {
+          latitude: lastFix.latitude,
+          longitude: lastFix.longitude,
+          accuracy: lastFix.accuracy,
+          timestamp: new Date().toISOString()
+        };
+      } else {
+        const permStatus = await Geolocation.checkPermissions();
+        if (permStatus.location !== 'granted') {
+          const req = await Geolocation.requestPermissions();
+          if (req.location !== 'granted') {
+            setError("Permission de localisation refusée, impossible de poser l'ancre");
+            return;
+          }
         }
+
+        const position = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 10000
+        });
+
+        anchorData = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: new Date().toISOString()
+        };
       }
-
-      const position = await Geolocation.getCurrentPosition({
-        enableHighAccuracy: true,
-        timeout: 10000
-      });
-
-      const anchorData = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        accuracy: position.coords.accuracy,
-        timestamp: new Date().toISOString()
-      };
 
       setAnchor(anchorData);
       if (socket && sessionId) {
@@ -512,7 +539,9 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    // data-theme is fixed to "night" for now; Phase 2 of the UI redesign
+    // adds the day/night/red toggle and auto-switching.
+    <div className="app" data-theme="night">
       {/* Error banner */}
       {error && (
         <div className="error-banner">
@@ -602,6 +631,7 @@ export default function App() {
           sessionId={sessionId}
           onZoneUpdate={handleZoneUpdate}
           role="main"
+          alarmed={alarmed}
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}

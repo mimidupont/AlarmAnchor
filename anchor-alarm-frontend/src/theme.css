@@ -1,0 +1,66 @@
+/*
+ * theme.css — marine night-instrument design system.
+ * Three themes switched by data-theme on the app root: day, night
+ * (default while monitoring/armed), red (night-vision preserving).
+ */
+
+:root,
+[data-theme='night'] {
+  --bg-app: #0d1117;
+  --bg-panel: #161d29;
+  --bg-map: #10161f;
+  --border-subtle: #2b3646;
+  --text-primary: #c9d1d9;
+  --text-secondary: #8b949e;
+  --ok: #5dcaa5; /* teal-green: inside zone, connected */
+  --ok-strong: #1d9e75;
+  --ok-bg: #0f2418;
+  --warn: #ef9f27; /* amber: approaching zone edge, degraded */
+  --warn-bg: #241a08;
+  --danger: #e24b4a; /* red: alarm, disconnected */
+  --danger-strong: #a32d2d;
+  --danger-bg: #2a0e0e;
+  --accent: #f0997b; /* coral: boat marker, secondary highlights */
+  --radius: 10px;
+  --radius-pill: 999px;
+}
+
+[data-theme='day'] {
+  --bg-app: #f5f6f8;
+  --bg-panel: #ffffff;
+  --bg-map: #e8edf5;
+  --border-subtle: #d7dce3;
+  --text-primary: #1c2330;
+  --text-secondary: #5c6675;
+  /* same ok/warn/danger hues as night */
+}
+
+[data-theme='red'] {
+  /* everything monochrome red on near-black */
+  --bg-app: #140404;
+  --bg-panel: #1e0808;
+  --bg-map: #180606;
+  --border-subtle: #4a1414;
+  --text-primary: #f0a0a0;
+  --text-secondary: #a05555;
+  --ok: #d07070;
+  --ok-strong: #a04040;
+  --ok-bg: #1e0808;
+  --warn: #e08080;
+  --warn-bg: #240a0a;
+  --danger: #ff6b6b;
+  --danger-strong: #c03030;
+  --danger-bg: #2e0c0c;
+  --accent: #e09090;
+}
+
+/*
+ * Map tile dark modes: filter the tile pane only (never markers or
+ * vector overlays) so OSM's light tiles read as a subdued dark chart.
+ */
+[data-theme='night'] .leaflet-tile-pane {
+  filter: brightness(0.7) invert(1) hue-rotate(200deg) saturate(0.55);
+}
+[data-theme='red'] .leaflet-tile-pane {
+  filter: sepia(1) hue-rotate(-30deg) saturate(2.2) brightness(0.5);
+}

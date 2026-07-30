@@ -5,10 +5,13 @@ export default function SessionManager({ onCreateSession, onJoinSession }) {
   const [sessionIdInput, setSessionIdInput] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setLoading(true);
-    onCreateSession();
-    setLoading(false);
+    try {
+      await onCreateSession();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleJoin = () => {

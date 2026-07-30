@@ -1,25 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import './AlarmNotification.css';
 
+// The overlay stays on screen until the alarm is explicitly acknowledged.
+// (It used to auto-hide after 10s, but since the component stays mounted
+// while `alarmed` is true, later alarms would then show no overlay at all
+// — and an anchor alarm should never dismiss itself anyway.)
 export default function AlarmNotification({ onAcknowledge }) {
-  const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    // Auto-hide after 10 seconds if not acknowledged
-    const timer = setTimeout(() => {
-      setVisible(false);
-    }, 10000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  const handleAcknowledge = () => {
-    setVisible(false);
-    onAcknowledge();
-  };
-
-  if (!visible) return null;
-
   return (
     <div className="alarm-notification-overlay">
       <div className="alarm-notification">
@@ -31,7 +17,7 @@ export default function AlarmNotification({ onAcknowledge }) {
         <div className="alert-details">
           <p>⚠️ Attention immédiate requise</p>
         </div>
-        <button onClick={handleAcknowledge} className="acknowledge-btn">
+        <button onClick={onAcknowledge} className="acknowledge-btn">
           Acquitter l'alarme
         </button>
       </div>

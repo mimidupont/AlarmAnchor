@@ -19,6 +19,10 @@ import { distanceMeters, destinationEast } from '../utils/geo';
 export default function useAnchorRadius(mapRef, anchor, radius, onRadiusChange, editable) {
   const circle = useRef(null);
   const handle = useRef(null);
+  // True while the user is dragging the handle. Radius changes re-run the
+  // effect below, and repositioning the handle mid-drag would snap it back
+  // due-east of the anchor, fighting the user's finger.
+  const dragging = useRef(false);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -63,13 +67,24 @@ export default function useAnchorRadius(mapRef, anchor, radius, onRadiusChange, 
         })
       }).addTo(map);
 
+      handle.current.on('dragstart', () => {
+        dragging.current = true;
+      });
+      handle.current.on('dragend', () => {
+        dragging.current = false;
+      });
       handle.current.on('drag', (e) => {
+        // Measure from the circle's current center (not the `center`
+        // captured when the handler was first created, which would be
+        // stale if the anchor has since been re-dropped).
+        if (!circle.current) return;
+        const c = circle.current.getLatLng();
         const pos = e.target.getLatLng();
-        const newRadius = distanceMeters(center[0], center[1], pos.lat, pos.lng);
-        if (circle.current) circle.current.setRadius(newRadius);
+        const newRadius = distanceMeters(c.lat, c.lng, pos.lat, pos.lng);
+        circle.current.setRadius(newRadius);
         onRadiusChange(Math.max(3, Math.round(newRadius)));
       });
-    } else {
+    } else if (!dragging.current) {
       handle.current.setLatLng(edgeLatLng);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

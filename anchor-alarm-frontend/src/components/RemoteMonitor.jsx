@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { distanceMeters, bearingDegrees } from '../utils/geo';
+import { distanceMeters, bearingDegrees, zoneRadiusMeters } from '../utils/geo';
+import { useT } from '../i18n';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
+import StatusPill from './StatusPill';
 import './RemoteMonitor.css';
 
 const BOAT_ICON = L.icon({
@@ -22,7 +24,8 @@ const ANCHOR_ICON = L.divIcon({
   popupAnchor: [0, -15]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme }) {
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected }) {
+  const t = useT();
   const mapContainer = useRef(null);
   const map = useRef(null);
   const zoneLayer = useRef(null);
@@ -111,7 +114,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
     const { latitude, longitude, accuracy } = currentLocation;
     const latlng = [latitude, longitude];
-    const popupText = `📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`;
+    const popupText = `${t('boatPosition')}<br/>${t('accuracyMeters', { n: Math.round(accuracy) })}`;
 
     // Move the existing marker instead of destroying/recreating it. This
     // avoids re-triggering the popup's open animation (and its auto-pan)
@@ -147,7 +150,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       boatMarker.current.openPopup();
       hasCenteredMap.current = true;
     }
-  }, [locations]);
+  }, [locations, t]);
 
   // Update anchor marker + chain line to the boat
   useEffect(() => {
@@ -166,8 +169,8 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
     }
 
     const anchorLatLng = [anchor.latitude, anchor.longitude];
-    const popupText = `⚓ Position de l'ancre${
-      anchor.accuracy ? `<br/>Précision : ${Math.round(anchor.accuracy)} m` : ''
+    const popupText = `${t('anchorPosition')}${
+      anchor.accuracy ? `<br/>${t('accuracyMeters', { n: Math.round(anchor.accuracy) })}` : ''
     }`;
 
     if (!anchorMarker.current) {
@@ -196,7 +199,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       map.current.removeLayer(anchorLine.current);
       anchorLine.current = null;
     }
-  }, [anchor, locations]);
+  }, [anchor, locations, t]);
 
   const boatLocation = locations ? Object.values(locations)[0] : null;
   const anchorDistance =
@@ -210,15 +213,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
   // Same effective-radius approximation as the main view: max distance
   // from anchor to any zone vertex, memoized per zone change.
-  const effectiveRadius = useMemo(() => {
-    if (!anchor || !zone || zone.length < 3) return 0;
-    let max = 0;
-    for (const [lat, lng] of zone) {
-      const d = distanceMeters(anchor.latitude, anchor.longitude, lat, lng);
-      if (d > max) max = d;
-    }
-    return max;
-  }, [zone, anchor]);
+  const effectiveRadius = useMemo(() => zoneRadiusMeters(anchor, zone), [zone, anchor]);
 
   const armed = Boolean(anchor) && zone && zone.length >= 3;
 
@@ -230,7 +225,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
   const updatedFooter = boatLocation ? (
     <div className="instrument-updated">
-      Updated {new Date(boatLocation.timestamp).toLocaleTimeString()}
+      {t('updatedAt', { time: new Date(boatLocation.timestamp).toLocaleTimeString() })}
     </div>
   ) : null;
 
@@ -239,7 +234,15 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       <TopStrip
         onBack={onBack}
         sessionId={sessionId}
-        right={<span className="status-pill status-pill-ok">Watching</span>}
+        right={
+          <StatusPill
+            mode="remote"
+            connected={connected}
+            boatLocation={boatLocation}
+            gpsError={null}
+            armed={armed}
+          />
+        }
       />
 
       {armed && anchorDistance !== null && (
@@ -259,7 +262,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
             <span>
               {boatLocation.latitude.toFixed(4)}°, {boatLocation.longitude.toFixed(4)}°
             </span>
-            <span>GPS {Math.round(boatLocation.accuracy)} m</span>
+            <span>{t('gpsLabel')} {Math.round(boatLocation.accuracy)} m</span>
           </div>
           {updatedFooter}
         </div>
@@ -267,7 +270,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
       {!boatLocation && (
         <div className="instrument-panel instrument-waiting">
-          <div className="instrument-label">Waiting for boat position…</div>
+          <div className="instrument-label">{t('waitingBoat')}</div>
         </div>
       )}
 

@@ -10,7 +10,7 @@
  * 6. Restored "leave session" confirmation dialog when zone/anchor would be lost
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import io from 'socket.io-client';
 import Map from './components/Map';
 import SessionManager from './components/SessionManager';
@@ -22,6 +22,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { isPointInPolygon } from './utils/geo';
+import { LangContext, defaultLang, makeT } from './i18n';
 import './App.css';
 
 // Foreground-service GPS watcher (@capacitor-community/background-geolocation).
@@ -58,6 +59,20 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(false);
   const [anchor, setAnchor] = useState(null); // { latitude, longitude, accuracy, timestamp } | null
   const [theme, setTheme] = useState(loadInitialTheme);
+  const [lang, setLang] = useState(defaultLang);
+  // Session just created on this (boat) phone: the session screen shows
+  // the share step (ID chip + QR) until the user opens the map.
+  const [createdSessionId, setCreatedSessionId] = useState(null);
+  // ?join=<ID> in the URL (from a scanned QR): auto-join as remote once
+  // the socket connects. Consumed exactly once.
+  const joinParamRef = useRef(
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('join')
+      : null
+  );
+  // Monitoring health, surfaced by the status pill
+  const [connected, setConnected] = useState(false);
+  const [gpsError, setGpsError] = useState(null);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const gpsWatchId = useRef(null);
   const pendingLeaveRef = useRef(null);
@@ -90,6 +105,24 @@ export default function App() {
   useEffect(() => {
     zoneRef.current = zone;
   }, [zone]);
+
+  const t = useMemo(() => makeT(lang), [lang]);
+  // Long-lived callbacks (socket handlers, GPS watcher) read the current
+  // translator through this ref rather than a stale closure.
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+
+  const toggleLang = () => {
+    const next = lang === 'en' ? 'fr' : 'en';
+    setLang(next);
+    try {
+      localStorage.setItem('lang', next);
+    } catch (err) {
+      // Persistence is best-effort only.
+    }
+  };
 
   const setAlarmedState = (value) => {
     alarmedRef.current = value;
@@ -149,21 +182,33 @@ export default function App() {
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server');
+      setConnected(true);
       setError(null);
       // Re-join the session after a reconnection, otherwise the server
       // no longer routes our updates and never checks the alarm.
       if (sessionRef.current) {
         newSocket.emit('join-session', sessionRef.current);
+      } else if (joinParamRef.current) {
+        // Arrived via a scanned QR link (?join=<ID>): join as remote
+        // directly. The 'Session not found' error path returns to the
+        // picker if the code is stale.
+        const joinId = joinParamRef.current.toUpperCase();
+        joinParamRef.current = null;
+        sessionRef.current = { sessionId: joinId, role: 'remote' };
+        setSessionId(joinId);
+        newSocket.emit('join-session', sessionRef.current);
+        setView('remote');
       }
     });
 
     newSocket.on('disconnect', () => {
       console.log('⚠️ Disconnected from server');
+      setConnected(false);
     });
 
     newSocket.on('error', (errorMsg) => {
       console.error('❌ Socket error:', errorMsg);
-      setError(`Connection error: ${errorMsg}`);
+      setError(tRef.current('errConnection', { msg: errorMsg }));
       // Joining a non-existent/expired session: go back to the picker
       // instead of showing an empty monitor that will never update.
       if (errorMsg === 'Session not found') {
@@ -245,14 +290,14 @@ export default function App() {
     const boatLocation = Object.values(locationsRef.current)[0];
     const locationText = boatLocation
       ? `Lat: ${boatLocation.latitude.toFixed(4)}, Lng: ${boatLocation.longitude.toFixed(4)}`
-      : 'Unknown location';
+      : tRef.current('unknownLocation');
 
     try {
       await LocalNotifications.schedule({
         notifications: [{
           id: 1,
-          title: '🚨 ANCHOR ALARM',
-          body: `Your boat has left the anchor zone! ${locationText}`,
+          title: tRef.current('notifTitle'),
+          body: tRef.current('notifBody', { loc: locationText }),
           sound: 'alarm.mp3',
           ongoing: true,
           autoCancel: false,
@@ -276,7 +321,7 @@ export default function App() {
   // Handle session join
   const handleJoinSession = (sessionIdInput, roleInput) => {
     if (!socket) {
-      setError('Connecting to server, please wait...');
+      setError(t('errConnecting'));
       return;
     }
 
@@ -326,9 +371,15 @@ export default function App() {
         throw new Error(`Server responded with ${response.status}`);
       }
       const data = await response.json();
-      handleJoinSession(data.sessionId, 'main');
+      // Join + start tracking right away, but stay on the session screen:
+      // it shows the share step (ID + QR) until "Open the map".
+      setSessionId(data.sessionId);
+      sessionRef.current = { sessionId: data.sessionId, role: 'main' };
+      socket.emit('join-session', sessionRef.current);
+      startGpsTracking();
+      setCreatedSessionId(data.sessionId);
     } catch (err) {
-      setError(`Failed to create session: ${err.message}`);
+      setError(t('errCreateSession', { msg: err.message }));
     }
   };
 
@@ -344,6 +395,7 @@ export default function App() {
       timestamp: new Date().toISOString()
     };
     lastFixRef.current = { ...location, receivedAt: Date.now() };
+    setGpsError(null);
 
     // Drive the map/status directly from the local fix (no server echo).
     setLocations({ boat: location });
@@ -379,20 +431,20 @@ export default function App() {
       try {
         const id = await BackgroundGeolocation.addWatcher(
           {
-            backgroundTitle: 'Alarme de mouillage active',
-            backgroundMessage: 'Surveillance de la position du bateau',
+            backgroundTitle: tRef.current('fgsTitle'),
+            backgroundMessage: tRef.current('fgsMessage'),
             requestPermissions: true,
             stale: false,
             distanceFilter: 0
           },
           (position, err) => {
             if (err) {
+              // Surfaced via the status pill ("No GPS" + detail in the
+              // sheet) rather than the blocking error banner — watcher
+              // errors are often transient and the banner covered the
+              // top strip until manually dismissed.
               console.error('❌ GPS Error:', err);
-              if (err.code === 'NOT_AUTHORIZED') {
-                setError('Permission de localisation refusée — ouvrez les réglages Android pour l\'autoriser');
-              } else {
-                setError(`GPS error: ${err.message}`);
-              }
+              setGpsError(err.code === 'NOT_AUTHORIZED' ? 'permission denied' : err.message || 'watcher error');
               return;
             }
             if (position) handleGpsFix(position);
@@ -412,7 +464,7 @@ export default function App() {
       try {
         const permStatus = await Geolocation.requestPermissions();
         if (permStatus.location !== 'granted') {
-          setError('Location permission was not granted');
+          setError(tRef.current('errLocPermission'));
           return;
         }
       } catch (permErr) {
@@ -427,8 +479,9 @@ export default function App() {
         },
         (position, err) => {
           if (err) {
+            // Pill-only, same reasoning as the native watcher above.
             console.error('❌ GPS Error:', err);
-            setError(`GPS error: ${err.message}`);
+            setGpsError(err.message || 'watcher error');
             return;
           }
           if (position) handleGpsFix(position.coords);
@@ -486,7 +539,7 @@ export default function App() {
         if (permStatus.location !== 'granted') {
           const req = await Geolocation.requestPermissions();
           if (req.location !== 'granted') {
-            setError("Permission de localisation refusée, impossible de poser l'ancre");
+            setError(t('errLocPermission'));
             return;
           }
         }
@@ -510,7 +563,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to drop anchor:', err);
-      setError(`Impossible de définir la position de l'ancre : ${err.message}`);
+      setError(t('errDropAnchor', { msg: err.message }));
     }
   };
 
@@ -539,6 +592,7 @@ export default function App() {
     sessionRef.current = null;
     zoneRef.current = [];
     acknowledgedRef.current = false;
+    setCreatedSessionId(null);
     setView('session');
     setSessionId(null);
     setZone([]);
@@ -580,6 +634,7 @@ export default function App() {
   };
 
   return (
+    <LangContext.Provider value={t}>
     <div className="app" data-theme={theme}>
       {/* Error banner */}
       {error && (
@@ -589,18 +644,23 @@ export default function App() {
         </div>
       )}
 
-      {/* Alarm notification overlay */}
+      {/* Alarm takeover */}
       {alarmed && (
-        <AlarmNotification onAcknowledge={handleAcknowledgeAlarm} />
+        <AlarmNotification
+          onAcknowledge={handleAcknowledgeAlarm}
+          anchor={anchor}
+          boatLocation={Object.values(locations)[0] || null}
+          zone={zone}
+        />
       )}
 
       {/* Leave-session confirmation overlay */}
       {confirmLeaveOpen && (
         <ConfirmDialog
-          title="Quitter la session ?"
-          message="Si vous quittez maintenant, la position de l'ancre et la zone de mouillage seront perdues."
-          confirmLabel="Quitter"
-          cancelLabel="Rester"
+          title={t('leaveTitle')}
+          message={t('leaveMessage')}
+          confirmLabel={t('leave')}
+          cancelLabel={t('stay')}
           danger
           onConfirm={handleConfirmLeave}
           onCancel={handleCancelLeave}
@@ -659,6 +719,11 @@ export default function App() {
         <SessionManager
           onCreateSession={handleCreateSession}
           onJoinSession={handleJoinSession}
+          createdSessionId={createdSessionId}
+          onEnterMap={() => setView('main')}
+          initialJoinId={joinParamRef.current || ''}
+          lang={lang}
+          onToggleLang={toggleLang}
         />
       )}
 
@@ -673,6 +738,8 @@ export default function App() {
           alarmed={alarmed}
           theme={theme}
           onCycleTheme={cycleTheme}
+          connected={connected}
+          gpsError={gpsError}
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}
@@ -690,9 +757,11 @@ export default function App() {
           alarmed={alarmed}
           theme={theme}
           onCycleTheme={cycleTheme}
+          connected={connected}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}
     </div>
+    </LangContext.Provider>
   );
 }

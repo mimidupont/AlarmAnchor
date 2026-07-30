@@ -4,38 +4,44 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
-import { distanceMeters, bearingDegrees, circlePolygonPoints } from '../utils/geo';
+import { distanceMeters, bearingDegrees, circlePolygonPoints, zoneRadiusMeters } from '../utils/geo';
 import ConfirmDialog from './ConfirmDialog';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
+import StatusPill from './StatusPill';
+import { useT } from '../i18n';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
 
-// Traduction du plugin Leaflet-Draw en français
-L.drawLocal.draw.toolbar.buttons.polygon = 'Dessiner une zone de mouillage';
-L.drawLocal.draw.toolbar.actions.title = 'Annuler le dessin';
-L.drawLocal.draw.toolbar.actions.text = 'Annuler';
-L.drawLocal.draw.toolbar.finish.title = 'Terminer le dessin';
-L.drawLocal.draw.toolbar.finish.text = 'Terminer';
-L.drawLocal.draw.toolbar.undo.title = 'Supprimer le dernier point dessiné';
-L.drawLocal.draw.toolbar.undo.text = 'Supprimer le dernier point';
-L.drawLocal.draw.handlers.polygon.tooltip.start = 'Cliquez pour commencer à dessiner la zone';
-L.drawLocal.draw.handlers.polygon.tooltip.cont = 'Cliquez pour continuer à dessiner la zone';
-L.drawLocal.draw.handlers.polygon.tooltip.end = 'Cliquez sur le premier point pour fermer la zone';
+// Localize the Leaflet-Draw plugin's toolbar/tooltips. L.drawLocal is a
+// global read lazily by the plugin, so mutating it per language change is
+// enough — called from an effect below.
+const applyDrawLocale = (t) => {
+  L.drawLocal.draw.toolbar.buttons.polygon = t('drawZone');
+  L.drawLocal.draw.toolbar.actions.title = t('drawCancel');
+  L.drawLocal.draw.toolbar.actions.text = t('drawCancel');
+  L.drawLocal.draw.toolbar.finish.title = t('drawFinish');
+  L.drawLocal.draw.toolbar.finish.text = t('drawFinish');
+  L.drawLocal.draw.toolbar.undo.title = t('drawDeleteLast');
+  L.drawLocal.draw.toolbar.undo.text = t('drawDeleteLast');
+  L.drawLocal.draw.handlers.polygon.tooltip.start = t('drawTooltipStart');
+  L.drawLocal.draw.handlers.polygon.tooltip.cont = t('drawTooltipCont');
+  L.drawLocal.draw.handlers.polygon.tooltip.end = t('drawTooltipEnd');
 
-L.drawLocal.edit.toolbar.buttons.edit = 'Modifier la zone';
-L.drawLocal.edit.toolbar.buttons.editDisabled = 'Aucune zone à modifier';
-L.drawLocal.edit.toolbar.buttons.remove = 'Supprimer la zone';
-L.drawLocal.edit.toolbar.buttons.removeDisabled = 'Aucune zone à supprimer';
-L.drawLocal.edit.toolbar.actions.save.title = 'Enregistrer les modifications';
-L.drawLocal.edit.toolbar.actions.save.text = 'Enregistrer';
-L.drawLocal.edit.toolbar.actions.cancel.title = 'Annuler les modifications';
-L.drawLocal.edit.toolbar.actions.cancel.text = 'Annuler';
-L.drawLocal.edit.handlers.edit.tooltip.text = 'Faites glisser les points pour modifier la zone';
-L.drawLocal.edit.handlers.edit.tooltip.subtext = 'Cliquez sur Annuler pour annuler les modifications';
-L.drawLocal.edit.handlers.remove.tooltip.text = 'Cliquez sur une zone pour la supprimer';
+  L.drawLocal.edit.toolbar.buttons.edit = t('editZone');
+  L.drawLocal.edit.toolbar.buttons.editDisabled = t('editZoneNone');
+  L.drawLocal.edit.toolbar.buttons.remove = t('deleteZone');
+  L.drawLocal.edit.toolbar.buttons.removeDisabled = t('deleteZoneNone');
+  L.drawLocal.edit.toolbar.actions.save.title = t('editSave');
+  L.drawLocal.edit.toolbar.actions.save.text = t('editSave');
+  L.drawLocal.edit.toolbar.actions.cancel.title = t('editCancel');
+  L.drawLocal.edit.toolbar.actions.cancel.text = t('editCancel');
+  L.drawLocal.edit.handlers.edit.tooltip.text = t('editTooltip');
+  L.drawLocal.edit.handlers.edit.tooltip.subtext = '';
+  L.drawLocal.edit.handlers.remove.tooltip.text = t('deleteTooltip');
+};
 
 const BOAT_ICON = L.icon({
   iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSI2IiBmaWxsPSIjRkY0NDQ0IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMiIvPjwvc3ZnPgo=',
@@ -55,7 +61,8 @@ const ANCHOR_ICON = L.divIcon({
 // Default scope: middle of the common 15-35m chain range.
 const DEFAULT_ANCHOR_RADIUS = 25;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme, connected, gpsError }) {
+  const t = useT();
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -84,6 +91,11 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
   const [radiusEditable, setRadiusEditable] = useState(false);
   const [confirmRaiseOpen, setConfirmRaiseOpen] = useState(false);
+
+  // Keep the leaflet-draw toolbar strings in the current language.
+  useEffect(() => {
+    applyDrawLocale(t);
+  }, [t]);
 
   // Draws the (optionally draggable) radius circle around the anchor.
   useAnchorRadius(map, anchor, anchorRadius, setAnchorRadius, radiusEditable);
@@ -235,7 +247,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
     const { latitude, longitude, accuracy } = currentDeviceLocation;
     const latlng = [latitude, longitude];
-    const popupText = `📍 Position du bateau<br/>Précision : ${Math.round(accuracy)} m`;
+    const popupText = `${t('boatPosition')}<br/>${t('accuracyMeters', { n: Math.round(accuracy) })}`;
 
     // Move the existing marker instead of destroying/recreating it. This
     // avoids re-triggering the popup's open animation (and its auto-pan)
@@ -290,11 +302,11 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     }
 
     const anchorLatLng = [anchor.latitude, anchor.longitude];
-    const popupText = `⚓ Position de l'ancre${
-      anchor.accuracy ? `<br/>Précision : ${Math.round(anchor.accuracy)} m` : ''
+    const popupText = `${t('anchorPosition')}${
+      anchor.accuracy ? `<br/>${t('accuracyMeters', { n: Math.round(anchor.accuracy) })}` : ''
     }<div class="popup-actions">
-      <button class="popup-adjust-radius">Ajuster le rayon</button>
-      <button class="popup-clear-anchor">Retirer l'ancre</button>
+      <button class="popup-adjust-radius">${t('adjustRadius')}</button>
+      <button class="popup-clear-anchor">${t('removeAnchor')}</button>
     </div>`;
 
     if (!anchorMarker.current) {
@@ -349,6 +361,17 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       anchorLine.current = null;
     }
   }, [anchor, locations]);
+
+  // Entering the radius editor: zoom to the anchor so the circle and its
+  // drag handle are at a workable size (at anchorage zoom the 25 m circle
+  // is a few pixels). One deliberate view change per explicit user action
+  // — not an automatic follow.
+  useEffect(() => {
+    if (radiusEditable && anchor && map.current) {
+      boatMarker.current?.closePopup();
+      map.current.setView([anchor.latitude, anchor.longitude], 17);
+    }
+  }, [radiusEditable, anchor]);
 
   // Drop anchor, then immediately open the radius editor so the scope
   // (chain length) can be adjusted before confirming the alarm zone.
@@ -414,15 +437,10 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // the max vertex distance equals anchorRadius; for a hand-drawn/edited
   // polygon it's a sane approximation of "how far out is still safe".
   // Recomputed only when the zone or anchor changes.
-  const effectiveRadius = useMemo(() => {
-    if (!anchor || !zone || zone.length < 3) return anchorRadius;
-    let max = 0;
-    for (const [lat, lng] of zone) {
-      const d = distanceMeters(anchor.latitude, anchor.longitude, lat, lng);
-      if (d > max) max = d;
-    }
-    return max;
-  }, [zone, anchor, anchorRadius]);
+  const effectiveRadius = useMemo(
+    () => zoneRadiusMeters(anchor, zone) || anchorRadius,
+    [zone, anchor, anchorRadius]
+  );
 
   // Armed = anchor set + zone confirmed + not currently re-editing the radius.
   const armed = Boolean(anchor) && zone && zone.length >= 3 && !radiusEditable;
@@ -435,12 +453,19 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
   return (
     <div className="map-container">
-      {/* Compact top strip: back, tap-to-copy session ID, status pill.
-          Placeholder pill — becomes live connection/GPS health in Phase 3 */}
+      {/* Compact top strip: back, tap-to-copy session ID, live health pill */}
       <TopStrip
         onBack={onBack}
         sessionId={sessionId}
-        right={<span className="status-pill status-pill-ok">Monitoring</span>}
+        right={
+          <StatusPill
+            mode="main"
+            connected={connected}
+            boatLocation={boatLocation}
+            gpsError={gpsError}
+            armed={armed}
+          />
+        }
       />
 
       {/* Instrument panel — only in the armed state */}
@@ -457,51 +482,67 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       {/* GPS-wait placeholder line (the old status bar is gone) */}
       {!boatLocation && (
         <div className="instrument-panel instrument-waiting">
-          <div className="instrument-label">Waiting for GPS signal…</div>
+          <div className="instrument-label">{t('waitingGps')}</div>
         </div>
       )}
 
       <div ref={mapContainer} className="map" />
 
-      <ThemeToggle theme={theme} onCycle={onCycleTheme} />
+      {/* Hidden while the radius sheet is up — it would sit under it */}
+      {!radiusEditable && <ThemeToggle theme={theme} onCycle={onCycleTheme} />}
 
-      {/* Bottom action bar */}
-      <div className="action-bar">
-        {!anchor && (
-          <button className="action-btn action-primary" onClick={handleDropAnchorClick}>
-            ⚓ Drop anchor
+      {/* Stage 1 — DROP: one large floating button over the map */}
+      {!anchor && (
+        <button className="float-drop-btn" onClick={handleDropAnchorClick}>
+          {t('dropAnchor')}
+        </button>
+      )}
+
+      {/* Stage 2 — SET RADIUS: bottom sheet with slider, two-way synced
+          with the draggable green handle on the map (both go through
+          setAnchorRadius, which useAnchorRadius renders). The map stays
+          interactive behind the sheet so the handle can still be dragged. */}
+      {anchor && radiusEditable && (
+        <div className="radius-sheet">
+          <div className="radius-sheet-value">
+            {anchorRadius}
+            <span className="radius-sheet-unit">m</span>
+          </div>
+          <input
+            type="range"
+            className="radius-slider"
+            min={10}
+            max={100}
+            step={5}
+            value={Math.min(100, Math.max(10, anchorRadius))}
+            onChange={(e) => setAnchorRadius(Number(e.target.value))}
+            aria-label="Zone radius"
+          />
+          <div className="radius-sheet-hint">{t('radiusHint')}</div>
+          <button className="action-btn action-primary radius-arm-btn" onClick={handleConfirmRadius}>
+            {t('armAlarm')}
           </button>
-        )}
+        </div>
+      )}
 
-        {anchor && radiusEditable && (
-          <>
-            <span className="radius-info">
-              Radius <strong>{anchorRadius} m</strong> — drag the green handle
-            </span>
-            <button className="action-btn action-primary" onClick={handleConfirmRadius}>
-              Arm alarm
-            </button>
-          </>
-        )}
-
-        {armed && (
-          <>
-            <button className="action-btn" onClick={handleAdjustRadius}>
-              Adjust zone
-            </button>
-            <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
-              Raise anchor
-            </button>
-          </>
-        )}
-      </div>
+      {/* Stage 3 — ARMED: bottom action bar */}
+      {armed && (
+        <div className="action-bar">
+          <button className="action-btn" onClick={handleAdjustRadius}>
+            {t('adjustZone')}
+          </button>
+          <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
+            {t('raiseAnchor')}
+          </button>
+        </div>
+      )}
 
       {confirmRaiseOpen && (
         <ConfirmDialog
-          title="Raise anchor?"
-          message="This clears the anchor position and disarms the alarm."
-          confirmLabel="Raise anchor"
-          cancelLabel="Keep watching"
+          title={t('raiseAnchorTitle')}
+          message={t('raiseAnchorMessage')}
+          confirmLabel={t('raiseAnchor')}
+          cancelLabel={t('keepWatching')}
           danger
           onConfirm={() => {
             setConfirmRaiseOpen(false);

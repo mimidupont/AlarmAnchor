@@ -1,135 +1,138 @@
-.alarm-notification-overlay {
+/* Full-screen alarm takeover. Danger-themed with hardcoded colors on
+   purpose: the alarm must look identical in day, night, and red modes. */
+
+.alarm-takeover {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  inset: 0;
+  z-index: 3000;
+  background: #1a0505;
+  color: #f0a0a0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
-  padding: 20px;
-  animation: fadeIn 0.3s ease-in;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.alarm-notification {
-  background: white;
-  border-radius: 16px;
-  padding: 40px;
-  max-width: 400px;
-  width: 100%;
+  gap: 10px;
+  padding: 24px 20px;
   text-align: center;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  animation: slideUp 0.3s ease-out;
+  touch-action: none;
 }
 
-@keyframes slideUp {
-  from {
-    transform: translateY(30px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
+.alarm-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
-.alarm-icon {
-  font-size: 60px;
-  margin-bottom: 16px;
-  animation: pulse 0.8s infinite;
+.alarm-pulse {
+  font-size: 46px;
+  line-height: 1;
+  animation: alarm-pulse 1.2s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  0%, 100% {
+@keyframes alarm-pulse {
+  0%,
+  100% {
     transform: scale(1);
   }
   50% {
-    transform: scale(1.1);
+    transform: scale(1.08);
   }
 }
 
-.alarm-notification h1 {
-  font-size: 32px;
-  color: #ff4444;
-  margin-bottom: 12px;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-
-.alarm-message {
-  font-size: 16px;
-  color: #333;
-  margin-bottom: 20px;
-  line-height: 1.6;
-}
-
-.alert-details {
-  background: #fff3cd;
-  border-left: 4px solid #ffc107;
-  padding: 16px;
-  border-radius: 6px;
-  margin-bottom: 24px;
-}
-
-.alert-details p {
-  color: #333;
-  font-size: 14px;
+.alarm-title {
   margin: 0;
+  font-size: 26px;
+  letter-spacing: 2px;
+  color: #ff6b6b;
+}
+
+.alarm-sub {
+  margin: 0;
+  font-size: 13px;
+  color: #c07070;
+  font-variant-numeric: tabular-nums;
+}
+
+.alarm-distance {
+  font-size: 84px;
   font-weight: 500;
+  line-height: 1;
+  color: #ff6b6b;
+  font-variant-numeric: tabular-nums;
 }
 
-.acknowledge-btn {
+.alarm-unit {
+  font-size: 30px;
+  font-weight: 400;
+  margin-left: 6px;
+  color: #c07070;
+}
+
+.alarm-zone-note {
+  margin: 0;
+  font-size: 15px;
+  color: #e09090;
+  font-variant-numeric: tabular-nums;
+}
+
+.alarm-minimap {
+  margin: 4px 0;
+  flex: none;
+}
+
+/* ---- Slide to silence ---- */
+
+.slide-track {
+  position: relative;
   width: 100%;
-  padding: 14px 24px;
-  font-size: 16px;
+  max-width: 340px;
+  height: 64px;
+  border-radius: 999px;
+  background: #2e0c0c;
+  border: 1px solid #a32d2d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.slide-label {
+  font-size: 14px;
   font-weight: 600;
-  border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #ff4444 0%, #ff6666 100%);
-  color: white;
-  cursor: pointer;
-  transition: all 0.3s ease;
+  color: #c07070;
+  letter-spacing: 1px;
+  user-select: none;
+  padding-left: 34px; /* visually centered in the space right of the thumb */
 }
 
-.acknowledge-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(255, 68, 68, 0.4);
+.slide-thumb {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #e24b4a;
+  color: #ffffff;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
-.acknowledge-btn:active {
-  transform: translateY(0);
+.slide-thumb:active {
+  cursor: grabbing;
 }
 
-@media (max-width: 600px) {
-  .alarm-notification {
-    padding: 32px 24px;
-  }
-
-  .alarm-icon {
-    font-size: 48px;
-  }
-
-  .alarm-notification h1 {
-    font-size: 28px;
-  }
-
-  .alarm-message {
-    font-size: 14px;
-  }
-
-  .acknowledge-btn {
-    padding: 12px 20px;
-    font-size: 14px;
-  }
+.alarm-caption {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #a05555;
+  max-width: 300px;
 }

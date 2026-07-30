@@ -60,12 +60,101 @@
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .status-pill-ok {
   color: var(--ok);
   background: var(--ok-bg);
-  border: 1px solid var(--ok-strong);
+  border-color: var(--ok-strong);
+}
+
+.status-pill-warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn);
+}
+
+.status-pill-danger {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger-strong);
+}
+
+/* ---- Status sheet (tap the pill) ---- */
+
+.status-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 2000;
+  display: flex;
+  align-items: flex-end;
+}
+
+.status-sheet {
+  width: 100%;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-subtle);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 16px;
+  color: var(--text-primary);
+}
+
+.status-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  font-size: 14px;
+}
+
+.status-sheet-name {
+  font-weight: 600;
+  min-width: 76px;
+}
+
+.status-sheet-detail {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sheet-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.sheet-dot-ok {
+  background: var(--ok);
+}
+
+.sheet-dot-warn {
+  background: var(--warn);
+}
+
+.sheet-dot-danger {
+  background: var(--danger);
+}
+
+.status-sheet-close {
+  margin-top: 12px;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ---- Instrument panel ---- */

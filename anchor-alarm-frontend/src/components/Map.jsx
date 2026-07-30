@@ -9,6 +9,7 @@ import ConfirmDialog from './ConfirmDialog';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
+import StatusPill from './StatusPill';
 import './Map.css';
 
 /* eslint-disable react-hooks/exhaustive-deps */
@@ -55,7 +56,7 @@ const ANCHOR_ICON = L.divIcon({
 // Default scope: middle of the common 15-35m chain range.
 const DEFAULT_ANCHOR_RADIUS = 25;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme, connected, gpsError }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -435,12 +436,19 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
   return (
     <div className="map-container">
-      {/* Compact top strip: back, tap-to-copy session ID, status pill.
-          Placeholder pill — becomes live connection/GPS health in Phase 3 */}
+      {/* Compact top strip: back, tap-to-copy session ID, live health pill */}
       <TopStrip
         onBack={onBack}
         sessionId={sessionId}
-        right={<span className="status-pill status-pill-ok">Monitoring</span>}
+        right={
+          <StatusPill
+            mode="main"
+            connected={connected}
+            boatLocation={boatLocation}
+            gpsError={gpsError}
+            armed={armed}
+          />
+        }
       />
 
       {/* Instrument panel — only in the armed state */}

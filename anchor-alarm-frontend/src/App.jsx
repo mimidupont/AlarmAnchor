@@ -58,6 +58,9 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(false);
   const [anchor, setAnchor] = useState(null); // { latitude, longitude, accuracy, timestamp } | null
   const [theme, setTheme] = useState(loadInitialTheme);
+  // Monitoring health, surfaced by the status pill
+  const [connected, setConnected] = useState(false);
+  const [gpsError, setGpsError] = useState(null);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const gpsWatchId = useRef(null);
   const pendingLeaveRef = useRef(null);
@@ -149,6 +152,7 @@ export default function App() {
 
     newSocket.on('connect', () => {
       console.log('✅ Connected to server');
+      setConnected(true);
       setError(null);
       // Re-join the session after a reconnection, otherwise the server
       // no longer routes our updates and never checks the alarm.
@@ -159,6 +163,7 @@ export default function App() {
 
     newSocket.on('disconnect', () => {
       console.log('⚠️ Disconnected from server');
+      setConnected(false);
     });
 
     newSocket.on('error', (errorMsg) => {
@@ -344,6 +349,7 @@ export default function App() {
       timestamp: new Date().toISOString()
     };
     lastFixRef.current = { ...location, receivedAt: Date.now() };
+    setGpsError(null);
 
     // Drive the map/status directly from the local fix (no server echo).
     setLocations({ boat: location });
@@ -387,12 +393,12 @@ export default function App() {
           },
           (position, err) => {
             if (err) {
+              // Surfaced via the status pill ("No GPS" + detail in the
+              // sheet) rather than the blocking error banner — watcher
+              // errors are often transient and the banner covered the
+              // top strip until manually dismissed.
               console.error('❌ GPS Error:', err);
-              if (err.code === 'NOT_AUTHORIZED') {
-                setError('Permission de localisation refusée — ouvrez les réglages Android pour l\'autoriser');
-              } else {
-                setError(`GPS error: ${err.message}`);
-              }
+              setGpsError(err.code === 'NOT_AUTHORIZED' ? 'permission denied' : err.message || 'watcher error');
               return;
             }
             if (position) handleGpsFix(position);
@@ -427,8 +433,9 @@ export default function App() {
         },
         (position, err) => {
           if (err) {
+            // Pill-only, same reasoning as the native watcher above.
             console.error('❌ GPS Error:', err);
-            setError(`GPS error: ${err.message}`);
+            setGpsError(err.message || 'watcher error');
             return;
           }
           if (position) handleGpsFix(position.coords);
@@ -673,6 +680,8 @@ export default function App() {
           alarmed={alarmed}
           theme={theme}
           onCycleTheme={cycleTheme}
+          connected={connected}
+          gpsError={gpsError}
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}
@@ -690,6 +699,7 @@ export default function App() {
           alarmed={alarmed}
           theme={theme}
           onCycleTheme={cycleTheme}
+          connected={connected}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}

@@ -5,6 +5,7 @@ import { distanceMeters, bearingDegrees } from '../utils/geo';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
+import StatusPill from './StatusPill';
 import './RemoteMonitor.css';
 
 const BOAT_ICON = L.icon({
@@ -22,7 +23,7 @@ const ANCHOR_ICON = L.divIcon({
   popupAnchor: [0, -15]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme }) {
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const zoneLayer = useRef(null);
@@ -239,7 +240,15 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       <TopStrip
         onBack={onBack}
         sessionId={sessionId}
-        right={<span className="status-pill status-pill-ok">Watching</span>}
+        right={
+          <StatusPill
+            mode="remote"
+            connected={connected}
+            boatLocation={boatLocation}
+            gpsError={null}
+            armed={armed}
+          />
+        }
       />
 
       {armed && anchorDistance !== null && (

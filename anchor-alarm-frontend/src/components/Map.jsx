@@ -70,6 +70,13 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // After that we leave the user's pan/zoom completely alone — the marker
   // still moves, but the map view is never touched again automatically.
   const hasCenteredMap = useRef(false);
+  // The anchor marker's popup is plain Leaflet DOM, not React — its
+  // buttons are wired up once when the popup first opens and call
+  // whatever these refs point to at click time, so they always trigger
+  // the current handler even though the popup itself isn't re-created
+  // on every render.
+  const handleAdjustRadiusRef = useRef(() => {});
+  const onClearAnchorRef = useRef(() => {});
   const [status, setStatus] = useState('Initialisation du GPS...');
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
   const [radiusEditable, setRadiusEditable] = useState(false);
@@ -287,12 +294,40 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     const anchorLatLng = [anchor.latitude, anchor.longitude];
     const popupText = `⚓ Position de l'ancre${
       anchor.accuracy ? `<br/>Précision : ${Math.round(anchor.accuracy)} m` : ''
-    }`;
+    }<div class="popup-actions">
+      <button class="popup-adjust-radius">Ajuster le rayon</button>
+      <button class="popup-clear-anchor">Retirer l'ancre</button>
+    </div>`;
 
     if (!anchorMarker.current) {
       anchorMarker.current = L.marker(anchorLatLng, { icon: ANCHOR_ICON })
         .addTo(map.current)
         .bindPopup(popupText);
+
+      // Popup content is plain DOM, outside React's tree, so buttons
+      // inside it need manual wiring. Query for them fresh each time the
+      // popup opens (rather than once at creation) since setPopupContent
+      // below replaces the DOM nodes on every anchor/location update.
+      anchorMarker.current.on('popupopen', () => {
+        const popupEl = anchorMarker.current.getPopup().getElement();
+        if (!popupEl) return;
+
+        const adjustBtn = popupEl.querySelector('.popup-adjust-radius');
+        if (adjustBtn) {
+          adjustBtn.onclick = () => {
+            anchorMarker.current.closePopup();
+            handleAdjustRadiusRef.current();
+          };
+        }
+
+        const clearBtn = popupEl.querySelector('.popup-clear-anchor');
+        if (clearBtn) {
+          clearBtn.onclick = () => {
+            anchorMarker.current.closePopup();
+            onClearAnchorRef.current();
+          };
+        }
+      });
     } else {
       anchorMarker.current.setLatLng(anchorLatLng);
       anchorMarker.current.setPopupContent(popupText);
@@ -360,6 +395,13 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     setStatus(`Zone de mouillage définie (rayon ${anchorRadius} m)`);
   };
 
+  // Keep the popup's button handlers pointing at the latest versions of
+  // these functions (the popup itself is created once, outside React).
+  useEffect(() => {
+    handleAdjustRadiusRef.current = handleAdjustRadius;
+    onClearAnchorRef.current = onClearAnchor;
+  });
+
   const boatLocation = locations ? Object.values(locations)[0] : null;
   const anchorDistance =
     anchor && boatLocation
@@ -405,20 +447,12 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         )}
 
         {anchor && !radiusEditable && (
-          <>
-            <span className="anchor-info">
-              ⚓ Ancre posée
-              {anchorDistance !== null
-                ? ` · ${Math.round(anchorDistance)} m · ${bearingToCompass(anchorBearing)} (${Math.round(anchorBearing)}°)`
-                : ''}
-            </span>
-            <button className="clear-anchor-btn" onClick={handleAdjustRadius}>
-              Ajuster le rayon
-            </button>
-            <button className="clear-anchor-btn" onClick={onClearAnchor}>
-              Retirer l'ancre
-            </button>
-          </>
+          <span className="anchor-info">
+            ⚓ Ancre posée
+            {anchorDistance !== null
+              ? ` · ${Math.round(anchorDistance)} m · ${bearingToCompass(anchorBearing)} (${Math.round(anchorBearing)}°)`
+              : ''}
+          </span>
         )}
       </div>
 

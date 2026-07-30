@@ -112,21 +112,6 @@
   font-weight: 500;
 }
 
-.clear-anchor-btn {
-  background: #f0f0f0;
-  color: #666;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.clear-anchor-btn:hover {
-  background: #e0e0e0;
-}
-
 .map {
   flex: 1;
   background-color: #dce4f5;
@@ -174,6 +159,36 @@
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
   background: transparent;
   border: none;
+}
+
+/* Buttons inside the anchor marker's popup — plain DOM, not React, so
+   these are queried and wired up manually (see Map.jsx) rather than
+   using onClick. */
+.popup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.popup-actions button {
+  background: #f0f0f0;
+  color: #333;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.popup-actions button:hover {
+  background: #e0e0e0;
+}
+
+.popup-clear-anchor {
+  color: #c0392b;
 }
 
 /* Draggable handle on the edge of the anchor radius circle */

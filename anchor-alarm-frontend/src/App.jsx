@@ -7,6 +7,7 @@
  * 3. Added Service Worker registration
  * 4. Better error handling for mobile audio
  * 5. Added manual anchor-drop tracking (separate from live boat GPS)
+ * 6. Restored "leave session" confirmation dialog when zone/anchor would be lost
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -15,6 +16,7 @@ import Map from './components/Map';
 import SessionManager from './components/SessionManager';
 import RemoteMonitor from './components/RemoteMonitor';
 import AlarmNotification from './components/AlarmNotification';
+import ConfirmDialog from './components/ConfirmDialog';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Geolocation } from '@capacitor/geolocation';
@@ -32,8 +34,10 @@ export default function App() {
   const [error, setError] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
   const [anchor, setAnchor] = useState(null); // { latitude, longitude, accuracy, timestamp } | null
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
   const gpsWatchId = useRef(null);
-  
+  const pendingLeaveRef = useRef(null);
+
 // Create the native notification channel (Android 8+ requires this)
   useEffect(() => {
     LocalNotifications.createChannel({
@@ -309,6 +313,50 @@ return () => {
     }
   };
 
+  // Reset all session-related state and return to the session picker.
+  const resetSessionState = () => {
+    setView('session');
+    setSessionId(null);
+    setZone([]);
+    setLocations({});
+    setAlarmed(false);
+    setAnchor(null);
+  };
+
+  const leaveMainSession = () => {
+    if (gpsWatchId.current) {
+      Geolocation.clearWatch({ id: gpsWatchId.current });
+    }
+    stopAlarm();
+    resetSessionState();
+  };
+
+  const leaveRemoteSession = () => {
+    resetSessionState();
+  };
+
+  // Warn before leaving if there's an anchor zone or dropped anchor that
+  // would be lost. Otherwise just leave immediately.
+  const requestLeaveSession = (leaveFn) => {
+    if (zone.length > 0 || anchor) {
+      pendingLeaveRef.current = leaveFn;
+      setConfirmLeaveOpen(true);
+    } else {
+      leaveFn();
+    }
+  };
+
+  const handleConfirmLeave = () => {
+    setConfirmLeaveOpen(false);
+    pendingLeaveRef.current?.();
+    pendingLeaveRef.current = null;
+  };
+
+  const handleCancelLeave = () => {
+    setConfirmLeaveOpen(false);
+    pendingLeaveRef.current = null;
+  };
+
   return (
     <div className="app">
       {/* Error banner */}
@@ -322,6 +370,19 @@ return () => {
       {/* Alarm notification overlay */}
       {alarmed && (
         <AlarmNotification onAcknowledge={handleAcknowledgeAlarm} />
+      )}
+
+      {/* Leave-session confirmation overlay */}
+      {confirmLeaveOpen && (
+        <ConfirmDialog
+          title="Quitter la session ?"
+          message="Si vous quittez maintenant, la position de l'ancre et la zone de mouillage seront perdues."
+          confirmLabel="Quitter"
+          cancelLabel="Rester"
+          danger
+          onConfirm={handleConfirmLeave}
+          onCancel={handleCancelLeave}
+        />
       )}
 
       {/* Debug panel (development only) */}
@@ -390,18 +451,7 @@ return () => {
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}
-          onBack={() => {
-            if (gpsWatchId.current) {
-              Geolocation.clearWatch({ id: gpsWatchId.current });
-            }
-            stopAlarm();
-            setView('session');
-            setSessionId(null);
-            setZone([]);
-            setLocations({});
-            setAlarmed(false);
-            setAnchor(null);
-          }}
+          onBack={() => requestLeaveSession(leaveMainSession)}
         />
       )}
 
@@ -412,14 +462,7 @@ return () => {
           locations={locations}
           sessionId={sessionId}
           anchor={anchor}
-          onBack={() => {
-            setView('session');
-            setSessionId(null);
-            setZone([]);
-            setLocations({});
-            setAlarmed(false);
-            setAnchor(null);
-          }}
+          onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}
     </div>

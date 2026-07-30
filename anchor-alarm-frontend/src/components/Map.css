@@ -96,6 +96,64 @@
   font-size: 17px;
 }
 
+/* ---- Zone sheet: segmented control + shape panel ---- */
+
+/* Keep the sheet short enough that the vertices being dragged are not
+   hidden underneath it. */
+.zone-sheet {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.zone-segmented {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 10px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+}
+
+.zone-segmented-btn {
+  flex: 1;
+  min-height: 44px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.zone-segmented-btn-active {
+  background: var(--ok-strong);
+  color: #ffffff;
+}
+
+/* Both mode panels share a height so the sheet never jumps when the
+   segmented control is switched. */
+.zone-sheet-body {
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.zone-shape-hint {
+  margin-bottom: 14px;
+}
+
+/* .action-btn carries flex:1 for the horizontal action bar; inside this
+   column that would stretch the button to fill the panel. Two classes
+   deep so it outranks .action-btn, which is defined further down. */
+.zone-sheet-body .zone-reset-btn {
+  width: 100%;
+  flex: none;
+  min-height: 48px;
+}
+
 /* ---- Stage 3: bottom action bar ---- */
 
 .action-bar {
@@ -197,12 +255,38 @@
   color: var(--danger);
 }
 
+/* leaflet-draw's own floating tooltip ("Drag handles or markers to edit
+   features") — the zone sheet carries that hint, so suppress it. */
+.map-container .leaflet-draw-tooltip {
+  display: none;
+}
+
+/* Vertex handles on the zone polygon in shape mode. leaflet-draw sizes
+   these inline, hence the !important overrides. The border uses the
+   panel color rather than white so the red night-vision theme stays
+   monochrome. */
+.map-container .leaflet-editing-icon {
+  width: 18px !important;
+  height: 18px !important;
+  margin-left: -9px !important;
+  margin-top: -9px !important;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 3px solid var(--bg-panel);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Midpoint handles (drag to add a vertex) read as secondary. */
+.map-container .leaflet-editing-icon.leaflet-edit-move {
+  background: var(--warn);
+}
+
 /* Draggable handle on the edge of the anchor radius circle */
 .radius-handle {
   width: 18px;
   height: 18px;
-  background: #27ae60;
-  border: 3px solid white;
+  background: var(--ok);
+  border: 3px solid var(--bg-panel);
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: grab;

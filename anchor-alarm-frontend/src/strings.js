@@ -75,6 +75,16 @@ export const strings = {
     sheetError: 'Error: {msg}',
     close: 'Close',
 
+    // Zone editor sheet
+    zoneModeCircle: 'Circle',
+    zoneModeShape: 'Shape',
+    shapeHint: 'Drag the points on the map to reshape the zone',
+    resetToCircle: 'Reset to circle',
+    done: 'Done',
+    backToCircleTitle: 'Back to a circle?',
+    backToCircleMessage: 'Your custom shape will be lost.',
+    keepShape: 'Keep the shape',
+
     // Alarm screen
     anchorDragging: 'ANCHOR DRAGGING',
     triggeredInfo: 'Triggered {time} · outside zone for {s}s',
@@ -96,23 +106,6 @@ export const strings = {
     errConnection: 'Connection error: {msg}',
     errLocPermission: 'Location permission was not granted',
     errDropAnchor: 'Could not set the anchor position: {msg}',
-
-    // Leaflet-draw toolbar
-    drawZone: 'Draw an anchor zone',
-    drawCancel: 'Cancel',
-    drawFinish: 'Finish',
-    drawDeleteLast: 'Delete last point',
-    drawTooltipStart: 'Tap to start drawing the zone',
-    drawTooltipCont: 'Tap to continue drawing the zone',
-    drawTooltipEnd: 'Tap the first point to close the zone',
-    editZone: 'Edit the zone',
-    editZoneNone: 'No zone to edit',
-    deleteZone: 'Delete the zone',
-    deleteZoneNone: 'No zone to delete',
-    editSave: 'Save',
-    editCancel: 'Cancel',
-    editTooltip: 'Drag the points to reshape the zone',
-    deleteTooltip: 'Tap a zone to delete it'
   },
 
   fr: {
@@ -182,6 +175,16 @@ export const strings = {
     sheetError: 'Erreur : {msg}',
     close: 'Fermer',
 
+    // Zone editor sheet
+    zoneModeCircle: 'Cercle',
+    zoneModeShape: 'Forme',
+    shapeHint: 'Glissez les points sur la carte pour modifier la zone',
+    resetToCircle: 'Revenir au cercle',
+    done: 'Terminé',
+    backToCircleTitle: 'Revenir à un cercle ?',
+    backToCircleMessage: 'Votre forme personnalisée sera perdue.',
+    keepShape: 'Garder la forme',
+
     anchorDragging: "L'ANCRE DÉRAPE",
     triggeredInfo: 'Déclenchée à {time} · hors zone depuis {s}s',
     zoneIs: 'zone de {n} m',
@@ -200,21 +203,5 @@ export const strings = {
     errConnection: 'Erreur de connexion : {msg}',
     errLocPermission: 'Permission de localisation refusée',
     errDropAnchor: "Impossible de définir la position de l'ancre : {msg}",
-
-    drawZone: 'Dessiner une zone de mouillage',
-    drawCancel: 'Annuler',
-    drawFinish: 'Terminer',
-    drawDeleteLast: 'Supprimer le dernier point',
-    drawTooltipStart: 'Touchez pour commencer la zone',
-    drawTooltipCont: 'Touchez pour continuer la zone',
-    drawTooltipEnd: 'Touchez le premier point pour fermer la zone',
-    editZone: 'Modifier la zone',
-    editZoneNone: 'Aucune zone à modifier',
-    deleteZone: 'Supprimer la zone',
-    deleteZoneNone: 'Aucune zone à supprimer',
-    editSave: 'Enregistrer',
-    editCancel: 'Annuler',
-    editTooltip: 'Faites glisser les points pour modifier la zone',
-    deleteTooltip: 'Touchez une zone pour la supprimer'
   }
 };

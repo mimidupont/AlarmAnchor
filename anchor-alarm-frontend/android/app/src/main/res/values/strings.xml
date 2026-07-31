@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">Anchor Alarm</string>
     <string name="title_activity_main">Anchor Alarm</string>
-    <string name="package_name">com.yourcompany.anchoralarm</string>
-    <string name="custom_url_scheme">com.yourcompany.anchoralarm</string>
+    <string name="package_name">com.deschamps.anchoralarm</string>
+    <string name="custom_url_scheme">com.deschamps.anchoralarm</string>
 </resources>

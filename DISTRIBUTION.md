@@ -47,10 +47,24 @@ committing anything: `git status --short` must not list them.
 ```bash
 npm install -g firebase-tools
 firebase login
-
-# Put this in your shell profile so npm run distribute:android picks it up
-export FIREBASE_APP_ID="1:123456789012:android:abc123def456"
 ```
+
+Then create the (gitignored) distribution config once:
+
+```bash
+cd anchor-alarm-frontend
+cp .env.distribution.example .env.distribution
+```
+
+and set the App ID in it:
+
+```properties
+FIREBASE_APP_ID=1:661000526462:android:21bd203bee54816824d62f
+FIREBASE_GROUPS=crew
+```
+
+`npm run distribute:android` loads that file automatically. The App ID stays out
+of the repository — set `FIREBASE_APP_ID` in your shell instead if you prefer.
 
 ## Every release
 
@@ -68,11 +82,15 @@ npm run distribute:android    # upload only
 
 APK lands at `android/app/build/outputs/apk/release/app-release.apk`.
 
-Add release notes by appending to the upload command:
+Extra arguments are forwarded to the firebase CLI, so release notes work like
+this:
 
 ```bash
 npm run distribute:android -- --release-notes "New zone editor: circle/shape sheet"
 ```
+
+The script refuses to run rather than doing something surprising if the App ID
+is missing or the APK has not been built yet.
 
 ### Why APK and not AAB
 

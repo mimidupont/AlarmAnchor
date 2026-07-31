@@ -1,4 +1,4 @@
-package com.yourcompany.anchoralarm;
+package com.deschamps.anchoralarm;
 
 import com.getcapacitor.BridgeActivity;
 

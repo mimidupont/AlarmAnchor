@@ -2,154 +2,202 @@
 
 Signed release APKs to a small tester group, free, no Play Store account.
 
-> ⚠️ **The keystore in commit `e4cb1e1` is compromised.** It was committed to
-> this public repository. Generate a new one before your first release — see
-> [Rotating the keystore](#rotating-the-keystore). Nothing has been distributed
-> yet, so this costs nothing now; after testers install a build, changing the
-> signing key forces every one of them to uninstall and reinstall.
+Live setup:
 
-## One-time setup
+| | |
+| --- | --- |
+| Firebase project | `anchor-alarm-b7201` (Spark / free plan) |
+| App ID | `1:661000526462:android:21bd203bee54816824d62f` |
+| Package | `com.deschamps.anchoralarm` |
+| Tester group | `crew` |
+| Signing key | `anchor-alarm-upload`, stored outside the repo |
 
-### 1. Keystore (local, never committed)
+## Prerequisites
 
-```bash
-cd anchor-alarm-frontend/android
-keytool -genkey -v -keystore anchor-alarm-release.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias anchor-alarm
+### JAVA_HOME must point at Java 21
+
+Gradle 8.14.3 cannot run on Java 25. With a newer JDK first on the path the
+build fails with a message that never mentions Java:
+
+```
+Unsupported class file major version 69
 ```
 
-Back up the `.jks` and both passwords somewhere durable (password manager).
-Lose them and testers can never be updated in place again.
+Point `JAVA_HOME` at the JBR bundled with Android Studio, which is Java 21 and
+matches `sourceCompatibility VERSION_21` in `capacitor.build.gradle`:
 
-```bash
-cp keystore.properties.example keystore.properties
-# then fill in the real passwords
+```bat
+:: Windows, permanent — reopen the terminal afterwards
+setx JAVA_HOME "C:\Program Files\Android\Android Studio\jbr"
 ```
 
-`*.jks`, `*.keystore` and `keystore.properties` are gitignored. Verify before
-committing anything: `git status --short` must not list them.
+```bash
+# macOS
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+# Linux
+export JAVA_HOME="/opt/android-studio/jbr"
+```
 
-### 2. Firebase console (browser)
+Verify with `java -version` → `21.x`.
 
-1. <https://console.firebase.google.com> → **Add project**. Analytics can be
-   disabled; App Distribution does not use it.
-2. **Add app → Android**. Package name must be exactly
-   **`com.deschamps.anchoralarm`**.
-3. Skip the `google-services.json` download and SDK steps — App Distribution
-   does not need them.
-4. Project settings → General → copy the **App ID**
-   (`1:123456789012:android:abc123…`).
-5. **Release & Monitor → App Distribution → Testers & Groups** → new group with
-   alias **`crew`**, add tester emails. The alias is what `--groups` references.
-
-### 3. Local environment
+### Toolchain
 
 ```bash
 npm install -g firebase-tools
 firebase login
 ```
 
-Then create the (gitignored) distribution config once:
+## Signing key
+
+The active key is **not** in the repository — deliberately, so it cannot be
+committed by accident:
+
+| | |
+| --- | --- |
+| Path | `C:\Users\Test\Keystores\anchor-alarm-upload.jks` |
+| Alias | `anchor-alarm-upload` |
+| Algorithm | RSA 2048, 10000 days |
+| DN | `CN=Anchor Alarm, OU=Unknown, O=Unknown, L=Unknown, ST=Unknown, C=CZ` |
+| SHA-256 | `f24212331055811507ff280e7a25a8136b2a2edaebdbaa761243974085078be1` |
+| SHA-1 | `036231cb8da4e115efd129c79ff89f04bdb9f295` |
+
+**That SHA-256 is the reference value.** Any release APK whose fingerprint does
+not match it was signed with the wrong key, and Android will refuse to install
+it over an existing build.
+
+Backed up off the machine; passwords live in a password manager. Lose either and
+testers can never be updated in place again — a new key means every tester
+uninstalls and reinstalls.
+
+Point Gradle at it via `anchor-alarm-frontend/android/keystore.properties`
+(gitignored — copy `keystore.properties.example`):
+
+```properties
+storeFile=C:/Users/Test/Keystores/anchor-alarm-upload.jks
+storePassword=…
+keyAlias=anchor-alarm-upload
+keyPassword=…
+```
+
+Forward slashes even on Windows: a backslash is an escape character in a
+`.properties` file.
+
+### The retired key
+
+The original `anchor-alarm-release.jks` was committed to this public repo in
+`e4cb1e1`, then deleted and replaced by the key above before anything was
+distributed. It is still retrievable from git history — history was not
+rewritten — but it signs nothing and must never be reused. Treat it as dead.
+
+`*.jks`, `*.keystore` and `keystore.properties` are gitignored now; verify with
+`git status --short` before committing, and `git ls-files | grep -i jks` should
+return nothing.
+
+## Firebase console (one-time, already done)
+
+1. <https://console.firebase.google.com> → **Add project**. Analytics off is
+   fine; App Distribution does not use it.
+2. **Add app → Android**, package name exactly `com.deschamps.anchoralarm`.
+3. Skip `google-services.json` and the SDK steps — App Distribution does not
+   need them.
+4. Project settings → General → the **App ID**.
+5. **Release & Monitor → App Distribution → Testers & Groups** → group alias
+   `crew`, add tester emails. The alias is what `--groups` references.
+
+Then, locally:
 
 ```bash
 cd anchor-alarm-frontend
 cp .env.distribution.example .env.distribution
 ```
 
-and set the App ID in it:
-
 ```properties
 FIREBASE_APP_ID=1:661000526462:android:21bd203bee54816824d62f
 FIREBASE_GROUPS=crew
 ```
 
-`npm run distribute:android` loads that file automatically. The App ID stays out
-of the repository — set `FIREBASE_APP_ID` in your shell instead if you prefer.
+`.env.distribution` is gitignored and loaded automatically by the release
+script, so the App ID stays out of the repository.
 
 ## Every release
 
 ```bash
 cd anchor-alarm-frontend
-npm run ship:android          # prepare + assembleRelease + upload to the crew group
+git status --short             # commit first — see versionCode below
+npm run ship:android           # prepare + assembleRelease + upload to crew
 ```
 
 Or in two steps:
 
 ```bash
-npm run release:android       # web build + cap sync + signed APK
-npm run distribute:android    # upload only
+npm run release:android        # web build + cap sync + signed APK
+npm run distribute:android     # upload only
 ```
 
-APK lands at `android/app/build/outputs/apk/release/app-release.apk`.
-
-Extra arguments are forwarded to the firebase CLI, so release notes work like
-this:
+Extra arguments reach the firebase CLI:
 
 ```bash
 npm run distribute:android -- --release-notes "New zone editor: circle/shape sheet"
 ```
 
-The script refuses to run rather than doing something surprising if the App ID
-is missing or the APK has not been built yet.
+The script stops with an actionable message if the App ID is missing or the APK
+has not been built, rather than passing a confusing error to the CLI.
+
+APK lands at `android/app/build/outputs/apk/release/app-release.apk`.
+
+### Checklist
+
+- [ ] `JAVA_HOME` is Java 21 (`java -version`)
+- [ ] Work is **committed** — `versionCode` derives from the commit count
+- [ ] `npm run release:android` — never `gradlew assembleRelease` alone, or the
+      APK ships the previous web assets and still builds fine
+- [ ] Fingerprint matches the reference SHA-256 above:
+      `apksigner verify --print-certs app-release.apk`
+      (Windows: `"%LOCALAPPDATA%\Android\Sdk\build-tools\36.0.0\apksigner.bat"`)
+- [ ] Installs over the previous build without uninstalling
+- [ ] Foreground-service notification appears while monitoring
+- [ ] Position still updates with the screen off for 10+ minutes
+- [ ] Remote monitor on another device receives the zone and the alarm
+
+### versionCode
+
+Derived automatically from `git rev-list --count HEAD` in
+`android/app/build.gradle`. It increments with every commit, so it cannot
+collide with an existing Firebase release and there is nothing to bump by hand.
+
+The consequence: **commit before building.** Two builds from the same commit
+produce the same `versionCode`, and Firebase rejects the second upload.
+
+Bump `versionName` in `android/app/build.gradle` when a release is meaningful
+to testers.
 
 ### Why APK and not AAB
 
 App Distribution accepts AABs only with a linked Play Console account — the
 thing this setup avoids.
 
-### versionCode
+### What gets baked in at build time
 
-Derived automatically from the git commit count (`app/build.gradle`), so it
-increments on every commit and can never collide with an existing Firebase
-release. Nothing to bump by hand. Bump `versionName` in `app/build.gradle` when
-a release is meaningful to testers.
-
-Commit before building: the version code reflects committed history, so two
-builds from the same commit produce the same code and Firebase rejects the
-second.
-
-### What gets baked in
-
-`.env.production` supplies, at build time:
+From `.env.production`:
 
 - `REACT_APP_BACKEND_URL=https://alarmanchor-backend.fly.dev`
 - `REACT_APP_FRONTEND_URL=https://alarm-anchor.vercel.app` — the base of QR join
-  links. Without it, QR codes resolve to `http://localhost` inside the webview
-  and are useless to another phone's camera.
+  links. Without it they resolve to `http://localhost` inside the webview and
+  are useless to another phone's camera.
 
-`npm run android:prepare` runs first in every script above; skipping it produces
-an APK containing the *previous* web assets, and the build still succeeds.
+`npm run android:prepare` runs first in every script above.
 
-## Rotating the keystore
+### Benign build warnings
 
-Required once, because the original was published. No testers have a build yet,
-so this is free right now.
-
-```bash
-cd anchor-alarm-frontend/android
-rm -f anchor-alarm-release.jks                 # the exposed one
-keytool -genkey -v -keystore anchor-alarm-release.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 -alias anchor-alarm
-# update keystore.properties with the new passwords
-```
-
-Optionally scrub it from git history too (rewriting published history; every
-clone must be re-cloned afterwards):
-
-```bash
-pip install git-filter-repo
-git filter-repo --path anchor-alarm-frontend/android/anchor-alarm-release.jks --invert-paths
-git push --force origin main
-```
-
-Rotating is what actually protects you — history rewriting does not un-publish a
-file that was public (forks, clones and caches keep it).
+Expected, not worth chasing: `flatDir` notices from Capacitor's generated Gradle
+files, source/target 8 deprecation from `@capacitor-community/background-geolocation`,
+and deprecated-API notes from `local-notifications`.
 
 ## What testers do
 
 1. Accept the email invite, signing in with that Google account.
 2. Install **Firebase App Tester** once. Android's "install from unknown apps"
-   prompt appears here once, not per build.
+   prompt appears there once, not per build.
 3. New releases show up in App Tester; tap install.
 
 Tell them explicitly: grant location **"Allow all the time"**. On Android 11+
@@ -157,19 +205,9 @@ that cannot be granted from the first dialog — Settings → Apps → Anchor Al
 Permissions → Location. Without it, tracking stops when the screen goes off,
 which is the entire point of the app.
 
-## Per-release checklist
-
-- [ ] Changes committed (versionCode follows commit count)
-- [ ] `npm run release:android` (never `gradlew` alone — web assets go stale)
-- [ ] APK signed: `apksigner verify --print-certs app-release.apk`
-- [ ] Installs over the previous build without uninstalling
-- [ ] Foreground-service notification appears while monitoring
-- [ ] Position still updates with the screen off for 10+ minutes
-- [ ] Remote monitor on another device receives the zone and the alarm
-
 ## Known limitations
 
 - Android only. No iOS project in this repo.
-- The Fly.io backend keeps sessions in memory: a machine restart drops every
-  anchor position and zone mid-test. Warn testers before it gets reported as a
-  bug.
+- The Fly.io backend keeps sessions in memory: a restart drops every anchor
+  position and zone mid-test. Warn testers before it gets reported as a bug.
+- The retired signing key remains in git history (see above).

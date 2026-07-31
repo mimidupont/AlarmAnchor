@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.yourcompany.anchoralarm',
+  appId: 'com.deschamps.anchoralarm',
   appName: 'Anchor Alarm',
   webDir: 'build',
   server: {

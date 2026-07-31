@@ -24,7 +24,10 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "android:prepare": "npm run build && npx cap sync android",
-    "android": "npm run android:prepare && npx cap open android"
+    "android": "npm run android:prepare && npx cap open android",
+    "release:android": "npm run android:prepare && cd android && ./gradlew assembleRelease",
+    "distribute:android": "firebase appdistribution:distribute android/app/build/outputs/apk/release/app-release.apk --app \"$FIREBASE_APP_ID\" --groups crew",
+    "ship:android": "npm run release:android && npm run distribute:android"
   },
   "eslintConfig": {
     "extends": [

@@ -1,5 +1,29 @@
 apply plugin: 'com.android.application'
 
+// Release signing credentials. keystore.properties and the .jks are
+// gitignored — never commit either. Without the file the project still
+// configures (debug builds, CI, a fresh clone); only assembleRelease
+// needs it, and it fails loudly there.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+// versionCode is derived from the commit count so it can never collide
+// with an existing Firebase release. Falls back to 1 outside a git
+// checkout (e.g. a source tarball).
+def gitVersionCode = {
+    try {
+        def proc = ['git', 'rev-list', '--count', 'HEAD'].execute(null, rootProject.projectDir)
+        proc.waitFor()
+        def count = proc.text.trim()
+        return count ? count.toInteger() : 1
+    } catch (Exception ignored) {
+        return 1
+    }
+}
+
 android {
     namespace = "com.deschamps.anchoralarm"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +31,8 @@ android {
         applicationId "com.deschamps.anchoralarm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode gitVersionCode()
+        versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +40,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig signingConfigs.release
+            // Deliberately not minifying: the background-geolocation and
+            // local-notifications plugins need ProGuard rules that are easy
+            // to get wrong, and a stripped build that silently breaks the
+            // foreground service is the worst bug to debug on a boat.
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

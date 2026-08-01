@@ -204,17 +204,24 @@ APK lands at `android/app/build/outputs/apk/release/app-release.apk`.
 - [ ] Position still updates with the screen off for 10+ minutes
 - [ ] Remote monitor on another device receives the zone and the alarm
 
-### versionCode
+### The two version numbers
 
-Derived automatically from `git rev-list --count HEAD` in
-`android/app/build.gradle`. It increments with every commit, so it cannot
-collide with an existing Firebase release and there is nothing to bump by hand.
+Firebase shows releases as **`versionName (versionCode)`** — e.g. `1.1.0 (63)`.
+They move independently:
 
-The consequence: **commit before building.** Two builds from the same commit
-produce the same `versionCode`, and Firebase rejects the second upload.
+| | Where | Behaviour |
+| :--- | :--- | :--- |
+| `versionCode` | `android/app/build.gradle`, from `git rev-list --count HEAD` | Automatic. Rises with every commit, so it jumps by however many commits landed since the last build — `49` → `63` is 14 commits, not a mistake. Android only requires it to increase; gaps are harmless. |
+| `versionName` | `android/app/build.gradle` + `src/version.js` | Manual. **Bump it whenever a build is meaningfully different**, or two unrelated builds both show as `1.0.0` and testers cannot tell them apart. |
 
-Bump `versionName` in `android/app/build.gradle` when a release is meaningful
-to testers.
+`versionCode` being automatic has one consequence: **commit before building.**
+Two builds from the same commit produce the same code, and Firebase rejects the
+second upload.
+
+When bumping `versionName`, change it in both places — `build.gradle` (what
+testers see in App Tester) and `src/version.js` (what shows on the session
+screen). They are separate on purpose: the in-app one lets you check the boat
+phone and a remote monitor are on the same build.
 
 ### Why APK and not AAB
 

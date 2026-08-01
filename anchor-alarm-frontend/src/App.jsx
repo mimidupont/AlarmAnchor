@@ -552,8 +552,10 @@ export default function App() {
       }
 
       setAnchor(anchorData);
+      // resetTrack: a new anchoring starts a fresh track. Moving an
+      // existing anchor omits the flag and keeps the history.
       if (socket && sessionId) {
-        socket.emit('update-anchor', { anchor: anchorData });
+        socket.emit('update-anchor', { anchor: anchorData, resetTrack: true });
       }
     } catch (err) {
       console.error('Failed to drop anchor:', err);
@@ -565,7 +567,17 @@ export default function App() {
   const handleClearAnchor = () => {
     setAnchor(null);
     if (socket && sessionId) {
-      socket.emit('update-anchor', { anchor: null });
+      socket.emit('update-anchor', { anchor: null, resetTrack: true });
+    }
+  };
+
+  // Move an already-dropped anchor to a corrected position. Unlike
+  // dropping, this keeps the track: it is the same anchoring, just a
+  // better fix on where the anchor actually lies.
+  const handleAnchorUpdate = (newAnchor) => {
+    setAnchor(newAnchor);
+    if (socket && sessionId) {
+      socket.emit('update-anchor', { anchor: newAnchor });
     }
   };
 
@@ -737,6 +749,7 @@ export default function App() {
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}
+          onAnchorUpdate={handleAnchorUpdate}
           onBack={() => requestLeaveSession(leaveMainSession)}
         />
       )}

@@ -295,3 +295,66 @@
 .radius-handle:active {
   cursor: grabbing;
 }
+
+/* ---- Move-anchor mode ---- */
+
+/* Halo on the anchor marker so it reads as grabbable.
+
+   Do NOT animate `transform` on the marker element itself: Leaflet
+   positions markers with `transform: translate3d(...)`, so a CSS
+   transform here replaces that translation and snaps the marker to the
+   map pane's origin — off-screen and impossible to grab. Animate the
+   ::after ring instead, which is a child and therefore harmless. */
+.anchor-marker-moving {
+  cursor: grab;
+}
+
+.anchor-marker-moving::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border: 2px solid var(--ok);
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
+  animation: anchor-grab-pulse 1.4s ease-in-out infinite;
+}
+
+.anchor-marker-moving:active {
+  cursor: grabbing;
+}
+
+@keyframes anchor-grab-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.18); opacity: 0.45; }
+}
+
+.move-sheet {
+  text-align: center;
+}
+
+.move-offset {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 6px 0 12px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  min-height: 27px; /* reserve the line so the sheet doesn't jump */
+}
+
+.move-sheet .move-boat-btn {
+  width: 100%;
+  flex: none;
+  min-height: 48px;
+  margin-bottom: 10px;
+}
+
+.move-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.move-actions .action-btn {
+  min-height: 56px;
+  font-size: 17px;
+}

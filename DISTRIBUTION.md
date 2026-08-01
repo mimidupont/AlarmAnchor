@@ -43,9 +43,31 @@ JDK 21 itself when none is found. To use one you already have instead, add to
 org.gradle.java.installations.paths=C:/Program Files/Android/Android Studio/jbr
 ```
 
-Check what Gradle can see with `gradlew -q javaToolchains`, and run
-`gradlew --stop` after changing `JAVA_HOME` — a daemon started with the old
-value survives and keeps using it.
+Check what Gradle can see with `gradlew -q javaToolchains`.
+
+### The reliable way: pin the JVM
+
+`JAVA_HOME` is easy to get wrong — `setx` does **not** affect the terminal you
+run it in, only new ones, so a window can still be on the system default (Java
+25) while you believe it is on the JBR. The symptom is Gradle failing before it
+compiles anything:
+
+```
+BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_'
+Unsupported class file major version 69
+```
+
+Pin it instead, in `%USERPROFILE%\.gradle\gradle.properties` (user-level, not
+the repo — the path is machine-specific):
+
+```properties
+org.gradle.java.home=C:/Program Files/Android/Android Studio/jbr
+```
+
+That wins over `JAVA_HOME` and `PATH`, so it cannot be undone by which window
+the build runs in. Run `gradlew --stop` after any change: a running daemon keeps
+the JVM it was started with, and an already-running one can silently make a
+build succeed that would otherwise fail (or the reverse).
 
 For requirement 1, point `JAVA_HOME` at the JBR bundled with Android Studio:
 

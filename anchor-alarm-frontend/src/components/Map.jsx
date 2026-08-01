@@ -21,6 +21,8 @@ import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
 import StatusPill from './StatusPill';
+import TrackToggle, { TRACK_MODES } from './TrackToggle';
+import useTrackLayers from './useTrackLayers';
 import ZoneSheet from './ZoneSheet';
 import MoveAnchorSheet from './MoveAnchorSheet';
 import { useT } from '../i18n';
@@ -66,8 +68,28 @@ const RESHAPED_TOLERANCE_M = 2;
 // polygon sits at worst ~3% inside the nominal radius, far below GPS noise.
 const SHAPE_STEPS = 12;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, alarmed, theme, onCycleTheme, connected, gpsError }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, track, alarmed, theme, onCycleTheme, connected, gpsError }) {
   const t = useT();
+  // Track visibility: All → 1 h → Off, persisted like the theme.
+  const [trackMode, setTrackMode] = useState(() => {
+    try {
+      const stored = localStorage.getItem('trackMode');
+      if (TRACK_MODES.includes(stored)) return stored;
+    } catch (err) {
+      // Storage unavailable — fall through to the default.
+    }
+    return 'all';
+  });
+
+  const cycleTrackMode = () => {
+    const next = TRACK_MODES[(TRACK_MODES.indexOf(trackMode) + 1) % TRACK_MODES.length];
+    setTrackMode(next);
+    try {
+      localStorage.setItem('trackMode', next);
+    } catch (err) {
+      // Persistence is best-effort.
+    }
+  };
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -131,6 +153,10 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       }
     });
   };
+
+  // Track polylines, under the zone and markers, never tappable. Hidden
+  // while the zone is being edited — those handles are crowded enough.
+  useTrackLayers(map, track, trackMode, !zoneEditing && !movingAnchor);
 
   // Initialize map
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -800,7 +826,12 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       <div ref={mapContainer} className="map" />
 
       {/* Hidden while the zone sheet is up — it would sit under it */}
-      {!zoneEditing && !movingAnchor && <ThemeToggle theme={theme} onCycle={onCycleTheme} />}
+      {!zoneEditing && !movingAnchor && (
+        <>
+          <TrackToggle mode={trackMode} onCycle={cycleTrackMode} />
+          <ThemeToggle theme={theme} onCycle={onCycleTheme} />
+        </>
+      )}
 
       {/* Stage 1 — DROP: one large floating button over the map */}
       {!anchor && (

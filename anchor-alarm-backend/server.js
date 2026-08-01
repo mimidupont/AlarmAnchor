@@ -30,6 +30,39 @@ const generateSessionId = () => {
   return id;
 };
 
+// Track thinning. A raw watch can deliver a fix every second; keeping all
+// of them is wasteful and renders as a fuzzy blob of GPS noise. Record a
+// point when the boat has moved far enough OR enough time has passed — the
+// time rule matters because a boat sitting still all night still needs
+// points, or a calm followed by a drag looks like a two-point track.
+const TRACK_MIN_MOVE_M = 2;
+const TRACK_MIN_INTERVAL_MS = 15000;
+// ~12 h at one point per 15 s. The track is the first structure in a
+// session that grows with time, so the cap is enforced on push, never
+// lazily.
+const TRACK_MAX_POINTS = 3000;
+
+// Same haversine as the client uses, kept local to avoid a dependency.
+const haversineMeters = (lat1, lon1, lat2, lon2) => {
+  const R = 6371000;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+// Points are flat [lat, lng, t] triples rather than objects: roughly a
+// quarter of the heap per session, and smaller on the wire.
+const shouldRecordTrackPoint = (track, lat, lng, t) => {
+  if (track.length === 0) return true;
+  const [pLat, pLng, pT] = track[track.length - 1];
+  if (t - pT >= TRACK_MIN_INTERVAL_MS) return true;
+  return haversineMeters(pLat, pLng, lat, lng) >= TRACK_MIN_MOVE_M;
+};
+
 // Helper: mark a session as recently used (drives expiry)
 const touchSession = (session) => {
   session.lastActivity = Date.now();
@@ -83,6 +116,7 @@ app.post('/api/sessions', (req, res) => {
     // the zone (re-arming), instead of re-firing on every GPS fix.
     acknowledged: false,
     anchor: null,
+    track: [],
     createdAt: Date.now(),
     lastActivity: Date.now()
   });
@@ -130,11 +164,14 @@ io.on('connection', (socket) => {
     console.log(`Client ${socket.id} joined session ${sessionId} as ${role}`);
 
     // Send current state to new client
+    // The track ships with the join payload so a remote monitor opening at
+    // 2 a.m. immediately sees the whole night, then appends from track-point.
     socket.emit('state-update', {
       zone: session.zone,
       locations: session.locations,
       alarmed: session.alarmed,
-      anchor: session.anchor
+      anchor: session.anchor,
+      track: session.track
     });
 
     // Notify others in session
@@ -156,11 +193,18 @@ io.on('connection', (socket) => {
   // Update anchor position (from main app). anchor is either
   // { latitude, longitude, accuracy, timestamp } or null to clear it.
   socket.on('update-anchor', (data) => {
-    const { anchor } = data;
+    const { anchor, resetTrack } = data;
     const session = sessions.get(socket.sessionId);
 
     if (session && (anchor === null || isValidLocation(anchor))) {
       session.anchor = anchor;
+      // The track is scoped to one anchoring: dropping or raising starts
+      // fresh, but *moving* an existing anchor keeps the history, which is
+      // why the client sends the flag rather than the server guessing.
+      if (resetTrack) {
+        session.track = [];
+        io.to(socket.sessionId).emit('track-reset');
+      }
       touchSession(session);
       io.to(socket.sessionId).emit('anchor-updated', { anchor });
     }
@@ -175,6 +219,17 @@ io.on('connection', (socket) => {
 
     session.locations[socket.id] = location;
     touchSession(session);
+
+    // Thin server-side rather than trusting the client to do it.
+    const t = Date.parse(location.timestamp) || Date.now();
+    if (shouldRecordTrackPoint(session.track, location.latitude, location.longitude, t)) {
+      const point = [location.latitude, location.longitude, t];
+      session.track.push(point);
+      if (session.track.length > TRACK_MAX_POINTS) {
+        session.track.splice(0, session.track.length - TRACK_MAX_POINTS);
+      }
+      io.to(socket.sessionId).emit('track-point', { point });
+    }
 
     // Check if alarm should trigger. An acknowledged alarm stays silent
     // while the boat remains outside; returning inside the zone re-arms it.

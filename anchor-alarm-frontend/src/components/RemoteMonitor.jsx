@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
@@ -13,6 +13,8 @@ import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
 import StatusPill from './StatusPill';
+import TrackToggle, { TRACK_MODES } from './TrackToggle';
+import useTrackLayers from './useTrackLayers';
 import './RemoteMonitor.css';
 
 const BOAT_ICON = L.icon({
@@ -30,8 +32,28 @@ const ANCHOR_ICON = L.divIcon({
   popupAnchor: [0, -15]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected }) {
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected, track }) {
   const t = useT();
+  // Track visibility: All → 1 h → Off, persisted like the theme.
+  const [trackMode, setTrackMode] = useState(() => {
+    try {
+      const stored = localStorage.getItem('trackMode');
+      if (TRACK_MODES.includes(stored)) return stored;
+    } catch (err) {
+      // Storage unavailable — fall through to the default.
+    }
+    return 'all';
+  });
+
+  const cycleTrackMode = () => {
+    const next = TRACK_MODES[(TRACK_MODES.indexOf(trackMode) + 1) % TRACK_MODES.length];
+    setTrackMode(next);
+    try {
+      localStorage.setItem('trackMode', next);
+    } catch (err) {
+      // Persistence is best-effort.
+    }
+  };
   const mapContainer = useRef(null);
   const map = useRef(null);
   const zoneLayer = useRef(null);
@@ -50,6 +72,10 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
   // We only ever auto-center/zoom the map once, on the very first GPS fix.
   // After that we leave the user's pan/zoom completely alone.
   const hasCenteredMap = useRef(false);
+
+  // Track polylines, under the zone and markers, never tappable. Hidden
+  // while the zone is being edited — those handles are crowded enough.
+  useTrackLayers(map, track, trackMode, true);
 
   // Initialize map
   useEffect(() => {
@@ -326,6 +352,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
       <div ref={mapContainer} className="map" />
 
+      <TrackToggle mode={trackMode} onCycle={cycleTrackMode} />
       <ThemeToggle theme={theme} onCycle={onCycleTheme} />
     </div>
   );

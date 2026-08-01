@@ -87,3 +87,77 @@ export function circlePolygonPoints(lat, lon, radiusMeters, steps = 16) {
   }
   return points;
 }
+
+// Move every vertex by the same lat/lng delta. Over the tens of meters
+// involved in correcting an anchor position, plain delta addition is
+// indistinguishable from a proper geodesic translation.
+export function translatePolygon(points, dLat, dLng) {
+  return points.map(([lat, lng]) => [lat + dLat, lng + dLng]);
+}
+
+// Local ENU-ish projection: meters east/north of a reference point.
+// Flat-earth approximation — accurate well beyond anchoring distances.
+function toLocalMeters(lat, lng, refLat, refLng) {
+  const mPerDegLat = 111320;
+  const mPerDegLng = 111320 * Math.cos((refLat * Math.PI) / 180);
+  return [(lng - refLng) * mPerDegLng, (lat - refLat) * mPerDegLat];
+}
+
+// Shortest distance from point p to segment a-b, all in local meters.
+// Also returns the parameter t of the closest point along the segment so
+// callers can recover its position.
+function closestOnSegment([px, py], [ax, ay], [bx, by]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return { t, distance: Math.hypot(px - (ax + t * dx), py - (ay + t * dy)) };
+}
+
+// Unsigned distance from a point to the closest point on the zone
+// boundary, in meters. null when there is no usable zone.
+export function distanceToZoneEdgeMeters(lat, lng, zone) {
+  if (!zone || zone.length < 3) return null;
+  const origin = [0, 0]; // the boat itself is the projection reference
+  let min = Infinity;
+  for (let i = 0, j = zone.length - 1; i < zone.length; j = i++) {
+    const a = toLocalMeters(zone[j][0], zone[j][1], lat, lng);
+    const b = toLocalMeters(zone[i][0], zone[i][1], lat, lng);
+    const { distance } = closestOnSegment(origin, a, b);
+    if (distance < min) min = distance;
+  }
+  return min;
+}
+
+// Signed margin: positive inside the zone (room left), negative outside
+// (distance past the boundary). Reuses the same point-in-polygon test the
+// alarm uses, so the sign always agrees with the alarm state.
+export function zoneMarginMeters(lat, lng, zone) {
+  const d = distanceToZoneEdgeMeters(lat, lng, zone);
+  if (d === null) return null;
+  return isPointInPolygon([lat, lng], zone) ? d : -d;
+}
+
+// The point on the zone boundary closest to [lat, lng], as [lat, lng].
+// Used to draw the "which way is trouble" line. null when no usable zone.
+export function nearestZonePoint(lat, lng, zone) {
+  if (!zone || zone.length < 3) return null;
+  const origin = [0, 0];
+  let best = null;
+  let min = Infinity;
+  for (let i = 0, j = zone.length - 1; i < zone.length; j = i++) {
+    const [latA, lngA] = zone[j];
+    const [latB, lngB] = zone[i];
+    const a = toLocalMeters(latA, lngA, lat, lng);
+    const b = toLocalMeters(latB, lngB, lat, lng);
+    const { t, distance } = closestOnSegment(origin, a, b);
+    if (distance < min) {
+      min = distance;
+      // Interpolate in lat/lng directly: the projection is linear in both
+      // coordinates, so the parameter t carries over unchanged.
+      best = [latA + t * (latB - latA), lngA + t * (lngB - lngA)];
+    }
+  }
+  return best;
+}

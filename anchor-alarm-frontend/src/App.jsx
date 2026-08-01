@@ -23,6 +23,13 @@ import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { isPointInPolygon } from './utils/geo';
 import { LangContext, defaultLang, makeT } from './i18n';
+import {
+  appendPoint,
+  deserializeTrack,
+  serializeTrack,
+  shouldRecordPoint,
+  trackStorageKey
+} from './utils/track';
 import './App.css';
 
 // Foreground-service GPS watcher (@capacitor-community/background-geolocation).
@@ -70,6 +77,14 @@ export default function App() {
       ? new URLSearchParams(window.location.search).get('join')
       : null
   );
+  // GPS track: the swing pattern over hours is the most diagnostic view
+  // in an anchor watch, and how you confirm after the fact that a 4 a.m.
+  // alarm was real. trackRef mirrors it for the GPS callback, same pattern
+  // as zoneRef / locationsRef.
+  const [track, setTrack] = useState([]);
+  const trackRef = useRef([]);
+  const trackDirty = useRef(false);
+  const trackSavedAt = useRef(0);
   // Monitoring health, surfaced by the status pill
   const [connected, setConnected] = useState(false);
   const [gpsError, setGpsError] = useState(null);
@@ -123,6 +138,64 @@ export default function App() {
       // Persistence is best-effort only.
     }
   };
+
+  // Persistence: an overnight watch that loses its track to an app restart
+  // is exactly the case you most wanted it. Written at most every 30 s or
+  // 20 points, and on pagehide / app-pause.
+  const persistTrack = (sessionIdOverride) => {
+    const id = sessionIdOverride || sessionRef.current?.sessionId;
+    if (!id) return;
+    try {
+      localStorage.setItem(trackStorageKey(id), serializeTrack(trackRef.current));
+      trackDirty.current = false;
+      trackSavedAt.current = Date.now();
+    } catch (err) {
+      // Quota or private mode — the track is a nice-to-have, never fatal.
+    }
+  };
+
+  const restoreTrack = (id) => {
+    try {
+      const raw = localStorage.getItem(trackStorageKey(id));
+      if (!raw) return;
+      const restored = deserializeTrack(raw);
+      if (restored.length) {
+        trackRef.current = restored;
+        setTrack(restored);
+      }
+    } catch (err) {
+      // Ignore — start with an empty track.
+    }
+  };
+
+  const clearTrack = () => {
+    const id = sessionRef.current?.sessionId;
+    trackRef.current = [];
+    setTrack([]);
+    trackDirty.current = false;
+    if (id) {
+      try {
+        localStorage.removeItem(trackStorageKey(id));
+      } catch (err) {
+        // Nothing to do.
+      }
+    }
+  };
+
+  // Flush on backgrounding: pagehide covers web and fires on Android when
+  // the webview is paused, which is when an OS kill is most likely.
+  useEffect(() => {
+    const flush = () => {
+      if (trackDirty.current) persistTrack();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setAlarmedState = (value) => {
     alarmedRef.current = value;
@@ -224,6 +297,29 @@ export default function App() {
         setAlarmed(data.alarmed);
       }
       setAnchor(data.anchor || null);
+      // A remote joining mid-session gets the whole night at once. The boat
+      // phone keeps its own locally recorded track, which is authoritative
+      // and survives the server being unreachable.
+      if (sessionRef.current?.role !== 'main' && Array.isArray(data.track)) {
+        trackRef.current = data.track;
+        setTrack(data.track);
+      }
+    });
+
+    newSocket.on('track-point', (data) => {
+      // Remotes append incrementally; the boat phone already recorded this
+      // point locally when the fix arrived.
+      if (sessionRef.current?.role === 'main') return;
+      if (!data || !Array.isArray(data.point)) return;
+      const next = appendPoint(trackRef.current, data.point);
+      trackRef.current = next;
+      setTrack(next);
+    });
+
+    newSocket.on('track-reset', () => {
+      if (sessionRef.current?.role === 'main') return;
+      trackRef.current = [];
+      setTrack([]);
     });
 
     newSocket.on('zone-updated', (data) => {
@@ -321,6 +417,9 @@ export default function App() {
 
     setSessionId(sessionIdInput);
     sessionRef.current = { sessionId: sessionIdInput, role: roleInput };
+    // Rejoining the same session on the boat phone restores the track that
+    // an app restart would otherwise have lost.
+    if (roleInput === 'main') restoreTrack(sessionIdInput);
 
     socket.emit('join-session', {
       sessionId: sessionIdInput,
@@ -406,6 +505,19 @@ export default function App() {
       } else if (!acknowledgedRef.current && !alarmedRef.current) {
         setAlarmedState(true);
         triggerAlarmSequence();
+      }
+    }
+
+    // Record the track after the alarm check, so nothing here can delay
+    // or affect the alarm decision.
+    const now = Date.parse(location.timestamp) || Date.now();
+    if (shouldRecordPoint(trackRef.current, latitude, longitude, now)) {
+      const next = appendPoint(trackRef.current, [latitude, longitude, now]);
+      trackRef.current = next;
+      setTrack(next);
+      trackDirty.current = true;
+      if (now - trackSavedAt.current > 30000 || next.length % 20 === 0) {
+        persistTrack();
       }
     }
 
@@ -552,9 +664,13 @@ export default function App() {
       }
 
       setAnchor(anchorData);
+      // resetTrack: a new anchoring starts a fresh track. Moving an
+      // existing anchor omits the flag and keeps the history.
       if (socket && sessionId) {
-        socket.emit('update-anchor', { anchor: anchorData });
+        socket.emit('update-anchor', { anchor: anchorData, resetTrack: true });
       }
+      // A new anchoring starts a fresh track (moving an anchor does not).
+      clearTrack();
     } catch (err) {
       console.error('Failed to drop anchor:', err);
       setError(t('errDropAnchor', { msg: err.message }));
@@ -565,7 +681,18 @@ export default function App() {
   const handleClearAnchor = () => {
     setAnchor(null);
     if (socket && sessionId) {
-      socket.emit('update-anchor', { anchor: null });
+      socket.emit('update-anchor', { anchor: null, resetTrack: true });
+    }
+    clearTrack();
+  };
+
+  // Move an already-dropped anchor to a corrected position. Unlike
+  // dropping, this keeps the track: it is the same anchoring, just a
+  // better fix on where the anchor actually lies.
+  const handleAnchorUpdate = (newAnchor) => {
+    setAnchor(newAnchor);
+    if (socket && sessionId) {
+      socket.emit('update-anchor', { anchor: newAnchor });
     }
   };
 
@@ -583,6 +710,7 @@ export default function App() {
 
   // Reset all session-related state and return to the session picker.
   const resetSessionState = () => {
+    clearTrack();
     sessionRef.current = null;
     zoneRef.current = [];
     acknowledgedRef.current = false;
@@ -737,6 +865,8 @@ export default function App() {
           anchor={anchor}
           onDropAnchor={handleDropAnchor}
           onClearAnchor={handleClearAnchor}
+          onAnchorUpdate={handleAnchorUpdate}
+          track={track}
           onBack={() => requestLeaveSession(leaveMainSession)}
         />
       )}
@@ -752,6 +882,7 @@ export default function App() {
           theme={theme}
           onCycleTheme={cycleTheme}
           connected={connected}
+          track={track}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}

@@ -1,12 +1,20 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { distanceMeters, bearingDegrees, zoneRadiusMeters } from '../utils/geo';
+import {
+  distanceMeters,
+  bearingDegrees,
+  zoneRadiusMeters,
+  zoneMarginMeters,
+  nearestZonePoint
+} from '../utils/geo';
 import { useT } from '../i18n';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
 import StatusPill from './StatusPill';
+import TrackToggle, { TRACK_MODES } from './TrackToggle';
+import useTrackLayers from './useTrackLayers';
 import './RemoteMonitor.css';
 
 const BOAT_ICON = L.icon({
@@ -24,8 +32,28 @@ const ANCHOR_ICON = L.divIcon({
   popupAnchor: [0, -15]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected }) {
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected, track }) {
   const t = useT();
+  // Track visibility: All → 1 h → Off, persisted like the theme.
+  const [trackMode, setTrackMode] = useState(() => {
+    try {
+      const stored = localStorage.getItem('trackMode');
+      if (TRACK_MODES.includes(stored)) return stored;
+    } catch (err) {
+      // Storage unavailable — fall through to the default.
+    }
+    return 'all';
+  });
+
+  const cycleTrackMode = () => {
+    const next = TRACK_MODES[(TRACK_MODES.indexOf(trackMode) + 1) % TRACK_MODES.length];
+    setTrackMode(next);
+    try {
+      localStorage.setItem('trackMode', next);
+    } catch (err) {
+      // Persistence is best-effort.
+    }
+  };
   const mapContainer = useRef(null);
   const map = useRef(null);
   const zoneLayer = useRef(null);
@@ -40,9 +68,14 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
   const accuracyCircle = useRef(null);
   const anchorMarker = useRef(null);
   const anchorLine = useRef(null);
+  const edgeLine = useRef(null);
   // We only ever auto-center/zoom the map once, on the very first GPS fix.
   // After that we leave the user's pan/zoom completely alone.
   const hasCenteredMap = useRef(false);
+
+  // Track polylines, under the zone and markers, never tappable. Hidden
+  // while the zone is being edited — those handles are crowded enough.
+  useTrackLayers(map, track, trackMode, true);
 
   // Initialize map
   useEffect(() => {
@@ -81,6 +114,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
       hasCenteredMap.current = false;
       anchorMarker.current = null;
       anchorLine.current = null;
+      edgeLine.current = null;
     };
   }, []);
 
@@ -217,11 +251,53 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
   const armed = Boolean(anchor) && zone && zone.length >= 3;
 
-  const panelState = alarmed
-    ? 'danger'
-    : anchorDistance !== null && anchorDistance > 0.8 * effectiveRadius
-      ? 'warn'
-      : 'ok';
+  // Same signed-margin logic as the boat view — see Map.jsx.
+  const margin =
+    boatLocation && zone && zone.length >= 3
+      ? zoneMarginMeters(boatLocation.latitude, boatLocation.longitude, zone)
+      : null;
+  const warnThreshold = Math.max(8, 0.15 * effectiveRadius);
+
+  // Thin line from the boat to the closest point on the boundary, shown
+  // only when the margin is inside the warn threshold — it makes "which
+  // way is trouble" obvious at a glance. Single reused layer, moved in
+  // place like the anchor line.
+  useEffect(() => {
+    if (!map.current) return;
+    const show =
+      boatLocation && zone && zone.length >= 3 && margin !== null && margin < warnThreshold;
+
+    if (!show) {
+      if (edgeLine.current) {
+        map.current.removeLayer(edgeLine.current);
+        edgeLine.current = null;
+      }
+      return;
+    }
+
+    const target = nearestZonePoint(boatLocation.latitude, boatLocation.longitude, zone);
+    if (!target) return;
+    const pts = [[boatLocation.latitude, boatLocation.longitude], target];
+
+    if (!edgeLine.current) {
+      edgeLine.current = L.polyline(pts, {
+        color: margin < 0 ? '#e24b4a' : '#ef9f27',
+        weight: 2,
+        opacity: 0.9,
+        interactive: false
+      }).addTo(map.current);
+    } else {
+      edgeLine.current.setLatLngs(pts);
+      edgeLine.current.setStyle({ color: margin < 0 ? '#e24b4a' : '#ef9f27' });
+    }
+  }, [boatLocation, zone, margin, warnThreshold]);
+
+  const panelState =
+    alarmed || (margin !== null && margin < 0)
+      ? 'danger'
+      : margin !== null && margin < warnThreshold
+        ? 'warn'
+        : 'ok';
 
   const updatedFooter = boatLocation ? (
     <div className="instrument-updated">
@@ -250,7 +326,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
           distance={anchorDistance}
           bearing={anchorBearing}
           radius={effectiveRadius}
-          accuracy={boatLocation?.accuracy}
+          margin={margin}
           state={panelState}
           footer={updatedFooter}
         />
@@ -276,6 +352,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
 
       <div ref={mapContainer} className="map" />
 
+      <TrackToggle mode={trackMode} onCycle={cycleTrackMode} />
       <ThemeToggle theme={theme} onCycle={onCycleTheme} />
     </div>
   );

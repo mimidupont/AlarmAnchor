@@ -249,3 +249,30 @@
 .theme-toggle-red {
   color: var(--danger);
 }
+
+/* ---- GPS track ---- */
+
+/* Styled here rather than via Leaflet's `color` option: that writes the
+   SVG stroke presentation attribute, which cannot resolve a CSS variable,
+   so a theme-aware track has to come from the stylesheet. */
+.track-line {
+  fill: none;
+  stroke: var(--accent);
+}
+
+.track-line-old {
+  stroke-opacity: 0.25;
+}
+
+.track-line-recent {
+  stroke-opacity: 0.75;
+}
+
+/* Sits above the theme toggle, same visual language. */
+.track-toggle {
+  bottom: 148px;
+}
+
+.track-toggle-off {
+  color: var(--text-secondary);
+}

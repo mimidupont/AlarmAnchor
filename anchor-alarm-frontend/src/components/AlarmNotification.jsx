@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { distanceMeters, bearingDegrees, bearingToCompass, zoneRadiusMeters } from '../utils/geo';
+import {
+  distanceMeters,
+  bearingDegrees,
+  bearingToCompass,
+  zoneMarginMeters,
+  zoneRadiusMeters
+} from '../utils/geo';
 import { useT } from '../i18n';
 import './AlarmNotification.css';
 
@@ -66,7 +72,17 @@ export default function AlarmNotification({ onAcknowledge, anchor, boatLocation,
     anchor && boatLocation
       ? distanceMeters(anchor.latitude, anchor.longitude, boatLocation.latitude, boatLocation.longitude)
       : null;
+  // Still needed for the minimap's scale, even though the readout below
+  // now reports the margin rather than the radius.
   const radius = useMemo(() => zoneRadiusMeters(anchor, zone), [anchor, zone]);
+  // During an alarm the useful number is how far past the boundary the
+  // boat is, not how big the zone was. Margin is negative outside, so
+  // negate it for display.
+  const metersOutside = useMemo(() => {
+    if (!boatLocation || !zone || zone.length < 3) return null;
+    const margin = zoneMarginMeters(boatLocation.latitude, boatLocation.longitude, zone);
+    return margin === null || margin >= 0 ? null : -margin;
+  }, [boatLocation, zone]);
 
   const outsideForS = Math.max(0, Math.round((now - triggeredAtRef.current) / 1000));
   const triggeredTime = new Date(triggeredAtRef.current).toLocaleTimeString([], {
@@ -135,7 +151,7 @@ export default function AlarmNotification({ onAcknowledge, anchor, boatLocation,
         <span className="alarm-unit">m</span>
       </div>
       <p className="alarm-zone-note">
-        {radius > 0 ? t('zoneIs', { n: Math.round(radius) }) : ''}
+        {metersOutside !== null ? t('metersOutside', { n: Math.round(metersOutside) }) : ''}
         {drift ? ` · ${t('drifting', { dir: drift.dir, kn: drift.knots.toFixed(1) })}` : ''}
       </p>
 

@@ -7,13 +7,24 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
-import { distanceMeters, bearingDegrees, circlePolygonPoints, zoneRadiusMeters } from '../utils/geo';
+import {
+  distanceMeters,
+  bearingDegrees,
+  circlePolygonPoints,
+  zoneRadiusMeters,
+  zoneMarginMeters,
+  nearestZonePoint,
+  translatePolygon
+} from '../utils/geo';
 import ConfirmDialog from './ConfirmDialog';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
 import ThemeToggle from './ThemeToggle';
 import StatusPill from './StatusPill';
+import TrackToggle, { TRACK_MODES } from './TrackToggle';
+import useTrackLayers from './useTrackLayers';
 import ZoneSheet from './ZoneSheet';
+import MoveAnchorSheet from './MoveAnchorSheet';
 import { useT } from '../i18n';
 import './Map.css';
 
@@ -57,8 +68,28 @@ const RESHAPED_TOLERANCE_M = 2;
 // polygon sits at worst ~3% inside the nominal radius, far below GPS noise.
 const SHAPE_STEPS = 12;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, alarmed, theme, onCycleTheme, connected, gpsError }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, track, alarmed, theme, onCycleTheme, connected, gpsError }) {
   const t = useT();
+  // Track visibility: All → 1 h → Off, persisted like the theme.
+  const [trackMode, setTrackMode] = useState(() => {
+    try {
+      const stored = localStorage.getItem('trackMode');
+      if (TRACK_MODES.includes(stored)) return stored;
+    } catch (err) {
+      // Storage unavailable — fall through to the default.
+    }
+    return 'all';
+  });
+
+  const cycleTrackMode = () => {
+    const next = TRACK_MODES[(TRACK_MODES.indexOf(trackMode) + 1) % TRACK_MODES.length];
+    setTrackMode(next);
+    try {
+      localStorage.setItem('trackMode', next);
+    } catch (err) {
+      // Persistence is best-effort.
+    }
+  };
   const mapContainer = useRef(null);
   const map = useRef(null);
   const drawnItems = useRef(null);
@@ -73,6 +104,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const accuracyCircle = useRef(null);
   const anchorMarker = useRef(null);
   const anchorLine = useRef(null);
+  const edgeLine = useRef(null);
   // We only ever auto-center/zoom the map once, on the very first GPS fix.
   // After that we leave the user's pan/zoom completely alone — the marker
   // still moves, but the map view is never touched again automatically.
@@ -84,6 +116,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // on every render.
   const handleAdjustRadiusRef = useRef(() => {});
   const onClearAnchorRef = useRef(() => {});
+  const onMoveAnchorRef = useRef(() => {});
   // Live vertex-editing handler (leaflet-draw's edit mode, driven from
   // the zone sheet instead of the removed toolbar).
   const editHandler = useRef(null);
@@ -94,6 +127,16 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // already-armed zone just closes the sheet.
   const [initialSetup, setInitialSetup] = useState(false);
   const [confirmRaiseOpen, setConfirmRaiseOpen] = useState(false);
+  // Move-anchor mode. The anchor marker is only draggable while this is
+  // on — a stray drag while panning at 3 a.m. must never move the zone.
+  const [movingAnchor, setMovingAnchor] = useState(false);
+  const [moveOffset, setMoveOffset] = useState(null); // { distance, bearing }
+  const [confirmFarMove, setConfirmFarMove] = useState(null); // { anchor, distance }
+  // Pre-move snapshot, so Cancel restores anchor and zone exactly.
+  const moveSnapshot = useRef(null);
+  // Live dragged position; never pushed to App/server until Save.
+  const pendingAnchor = useRef(null);
+  const movingAnchorRef = useRef(false);
   const [confirmBackToCircleOpen, setConfirmBackToCircleOpen] = useState(false);
 
   // The temporary green circle + drag handle belong to circle mode only,
@@ -110,6 +153,10 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       }
     });
   };
+
+  // Track polylines, under the zone and markers, never tappable. Hidden
+  // while the zone is being edited — those handles are crowded enough.
+  useTrackLayers(map, track, trackMode, !zoneEditing && !movingAnchor);
 
   // Initialize map
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,6 +212,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       hasCenteredMap.current = false;
       anchorMarker.current = null;
       anchorLine.current = null;
+      edgeLine.current = null;
     };
   }, []);
 
@@ -266,13 +314,24 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       anchor.accuracy ? `<br/>${t('accuracyMeters', { n: Math.round(anchor.accuracy) })}` : ''
     }<div class="popup-actions">
       <button class="popup-adjust-radius">${t('adjustRadius')}</button>
+      <button class="popup-move-anchor">${t('moveAnchor')}</button>
       <button class="popup-clear-anchor">${t('removeAnchor')}</button>
     </div>`;
 
     if (!anchorMarker.current) {
-      anchorMarker.current = L.marker(anchorLatLng, { icon: ANCHOR_ICON })
+      anchorMarker.current = L.marker(anchorLatLng, { icon: ANCHOR_ICON, draggable: false })
         .addTo(map.current)
         .bindPopup(popupText);
+
+      // Live preview while dragging in move mode. Leaflet's draggable
+      // marker already stops the drag from panning the map.
+      anchorMarker.current.on('drag', (e) => {
+        if (!movingAnchorRef.current) return;
+        const latlng = e.target.getLatLng();
+        pendingAnchor.current = { latitude: latlng.lat, longitude: latlng.lng };
+        previewZoneAt(latlng);
+        updateMoveOffset(latlng);
+      });
 
       // Popup content is plain DOM, outside React's tree, so buttons
       // inside it need manual wiring. Query for them fresh each time the
@@ -290,6 +349,14 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
           };
         }
 
+        const moveBtn = popupEl.querySelector('.popup-move-anchor');
+        if (moveBtn) {
+          moveBtn.onclick = () => {
+            anchorMarker.current.closePopup();
+            onMoveAnchorRef.current();
+          };
+        }
+
         const clearBtn = popupEl.querySelector('.popup-clear-anchor');
         if (clearBtn) {
           clearBtn.onclick = () => {
@@ -299,7 +366,9 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         }
       });
     } else {
-      anchorMarker.current.setLatLng(anchorLatLng);
+      // While dragging, the marker position is owned by the drag, not by
+      // the (still unchanged) anchor prop.
+      if (!movingAnchorRef.current) anchorMarker.current.setLatLng(anchorLatLng);
       anchorMarker.current.setPopupContent(popupText);
     }
 
@@ -454,6 +523,160 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     }
   };
 
+  // Center on the anchor when move mode opens. Deferred to an effect (and
+  // past a tick) rather than done in the click handler: the sheet mounting
+  // resizes the map container, and centering before that layout settles
+  // leaves the anchor off-screen — where it cannot be grabbed at all.
+  // Explicit user action, so touching the view here is allowed.
+  useEffect(() => {
+    if (!movingAnchor || !anchor || !map.current) return;
+    const id = setTimeout(() => {
+      if (!map.current) return;
+      map.current.invalidateSize();
+      map.current.setView([anchor.latitude, anchor.longitude], 18);
+    }, 80);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [movingAnchor]);
+
+  // Toggle the anchor marker between fixed and draggable as move mode
+  // comes and goes, and keep the zone preview following the drag. Wired
+  // through a ref so the handlers always see current state without
+  // rebinding Leaflet events on every render.
+  useEffect(() => {
+    movingAnchorRef.current = movingAnchor;
+    const marker = anchorMarker.current;
+    if (!marker) return;
+
+    const el = marker.getElement();
+    if (movingAnchor) {
+      marker.dragging?.enable();
+      el?.classList.add('anchor-marker-moving');
+    } else {
+      marker.dragging?.disable();
+      el?.classList.remove('anchor-marker-moving');
+      // Restore the committed zone styling after a preview.
+      getZonePolygon()?.setStyle(ZONE_STYLE);
+    }
+  }, [movingAnchor, anchor]);
+
+  // ---- Move anchor ------------------------------------------------------
+
+  // Redraw the zone preview as the anchor is dragged. Local to this
+  // component: the alarm keeps using the committed zone in App state
+  // until Save, so a drag can never raise or clear an alarm.
+  const previewZoneAt = (latlng) => {
+    const snap = moveSnapshot.current;
+    if (!snap || !snap.zone || snap.zone.length < 3) return;
+    const dLat = latlng.lat - snap.anchor.latitude;
+    const dLng = latlng.lng - snap.anchor.longitude;
+    const points = translatePolygon(snap.zone, dLat, dLng);
+    const polygon = getZonePolygon();
+    if (polygon) {
+      polygon.setLatLngs(points);
+    } else {
+      setZonePolygon(points);
+    }
+    getZonePolygon()?.setStyle({ opacity: 0.5, fillOpacity: 0.07, dashArray: '3, 7' });
+  };
+
+  const updateMoveOffset = (latlng) => {
+    const snap = moveSnapshot.current;
+    if (!snap) return;
+    setMoveOffset({
+      distance: distanceMeters(snap.anchor.latitude, snap.anchor.longitude, latlng.lat, latlng.lng),
+      bearing: bearingDegrees(snap.anchor.latitude, snap.anchor.longitude, latlng.lat, latlng.lng)
+    });
+  };
+
+  const handleStartMoveAnchor = () => {
+    if (!anchor || !map.current) return;
+    moveSnapshot.current = { anchor: { ...anchor }, zone: zone ? [...zone] : [] };
+    pendingAnchor.current = { ...anchor };
+    setMoveOffset(null);
+    setMovingAnchor(true);
+    boatMarker.current?.closePopup();
+  };
+
+  const finishMove = () => {
+    setMovingAnchor(false);
+    setMoveOffset(null);
+    moveSnapshot.current = null;
+    pendingAnchor.current = null;
+  };
+
+  const handleCancelMove = () => {
+    const snap = moveSnapshot.current;
+    if (snap) {
+      // Restore both the marker and the zone exactly as they were.
+      anchorMarker.current?.setLatLng([snap.anchor.latitude, snap.anchor.longitude]);
+      if (snap.zone && snap.zone.length >= 3) {
+        setZonePolygon(snap.zone);
+      } else {
+        drawnItems.current?.clearLayers();
+      }
+    }
+    finishMove();
+  };
+
+  const commitMove = (newAnchor) => {
+    const snap = moveSnapshot.current;
+    const dLat = newAnchor.latitude - snap.anchor.latitude;
+    const dLng = newAnchor.longitude - snap.anchor.longitude;
+
+    // Anchor first, then the zone: a remote receiving the zone first
+    // would briefly draw it off the anchor.
+    onAnchorUpdate(newAnchor);
+    if (snap.zone && snap.zone.length >= 3) {
+      const moved = translatePolygon(snap.zone, dLat, dLng);
+      setZonePolygon(moved);
+      onZoneUpdate(moved);
+    }
+    finishMove();
+  };
+
+  const handleSaveMove = () => {
+    const target = pendingAnchor.current;
+    const snap = moveSnapshot.current;
+    if (!target || !snap) return;
+
+    const newAnchor = {
+      latitude: target.latitude,
+      longitude: target.longitude,
+      accuracy: target.accuracy ?? snap.anchor.accuracy,
+      timestamp: new Date().toISOString()
+    };
+
+    // Re-anchoring somewhere genuinely different is allowed, but a drag
+    // that lands hundreds of meters from the boat is usually a slip.
+    if (boatLocation) {
+      const fromBoat = distanceMeters(
+        boatLocation.latitude,
+        boatLocation.longitude,
+        newAnchor.latitude,
+        newAnchor.longitude
+      );
+      if (fromBoat > 200) {
+        setConfirmFarMove({ anchor: newAnchor, distance: fromBoat });
+        return;
+      }
+    }
+    commitMove(newAnchor);
+  };
+
+  const handleUseBoatPosition = () => {
+    if (!boatLocation || !map.current) return;
+    const latlng = L.latLng(boatLocation.latitude, boatLocation.longitude);
+    pendingAnchor.current = {
+      latitude: boatLocation.latitude,
+      longitude: boatLocation.longitude,
+      accuracy: boatLocation.accuracy
+    };
+    anchorMarker.current?.setLatLng(latlng);
+    previewZoneAt(latlng);
+    updateMoveOffset(latlng);
+  };
+
   const handleConfirmZone = () => {
     if (!anchor) return;
 
@@ -489,6 +712,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   useEffect(() => {
     handleAdjustRadiusRef.current = handleAdjustZone;
     onClearAnchorRef.current = onClearAnchor;
+    onMoveAnchorRef.current = handleStartMoveAnchor;
   });
 
   const boatLocation = locations ? Object.values(locations)[0] : null;
@@ -513,11 +737,56 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // Armed = anchor set + zone confirmed + not currently editing the zone.
   const armed = Boolean(anchor) && zone && zone.length >= 3 && !zoneEditing;
 
-  const panelState = alarmed
-    ? 'danger'
-    : anchorDistance !== null && anchorDistance > 0.8 * effectiveRadius
-      ? 'warn'
-      : 'ok';
+  // Signed room left before the boat crosses the boundary; drives both the
+  // readout and the panel color. The 8 m floor on the warn threshold
+  // matters on a tight zone: 15% of 15 m is 2 m, inside GPS noise, so it
+  // would never warn before the alarm itself fired.
+  const margin =
+    boatLocation && zone && zone.length >= 3
+      ? zoneMarginMeters(boatLocation.latitude, boatLocation.longitude, zone)
+      : null;
+  const warnThreshold = Math.max(8, 0.15 * effectiveRadius);
+
+  // Thin line from the boat to the closest point on the boundary, shown
+  // only when the margin is inside the warn threshold — it makes "which
+  // way is trouble" obvious at a glance. Single reused layer, moved in
+  // place like the anchor line.
+  useEffect(() => {
+    if (!map.current) return;
+    const show =
+      boatLocation && zone && zone.length >= 3 && margin !== null && margin < warnThreshold;
+
+    if (!show) {
+      if (edgeLine.current) {
+        map.current.removeLayer(edgeLine.current);
+        edgeLine.current = null;
+      }
+      return;
+    }
+
+    const target = nearestZonePoint(boatLocation.latitude, boatLocation.longitude, zone);
+    if (!target) return;
+    const pts = [[boatLocation.latitude, boatLocation.longitude], target];
+
+    if (!edgeLine.current) {
+      edgeLine.current = L.polyline(pts, {
+        color: margin < 0 ? '#e24b4a' : '#ef9f27',
+        weight: 2,
+        opacity: 0.9,
+        interactive: false
+      }).addTo(map.current);
+    } else {
+      edgeLine.current.setLatLngs(pts);
+      edgeLine.current.setStyle({ color: margin < 0 ? '#e24b4a' : '#ef9f27' });
+    }
+  }, [boatLocation, zone, margin, warnThreshold]);
+
+  const panelState =
+    alarmed || (margin !== null && margin < 0)
+      ? 'danger'
+      : margin !== null && margin < warnThreshold
+        ? 'warn'
+        : 'ok';
 
   return (
     <div className="map-container">
@@ -542,7 +811,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
           distance={anchorDistance}
           bearing={anchorBearing}
           radius={effectiveRadius}
-          accuracy={boatLocation?.accuracy}
+          margin={margin}
           state={panelState}
         />
       )}
@@ -557,7 +826,12 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       <div ref={mapContainer} className="map" />
 
       {/* Hidden while the zone sheet is up — it would sit under it */}
-      {!zoneEditing && <ThemeToggle theme={theme} onCycle={onCycleTheme} />}
+      {!zoneEditing && !movingAnchor && (
+        <>
+          <TrackToggle mode={trackMode} onCycle={cycleTrackMode} />
+          <ThemeToggle theme={theme} onCycle={onCycleTheme} />
+        </>
+      )}
 
       {/* Stage 1 — DROP: one large floating button over the map */}
       {!anchor && (
@@ -581,11 +855,24 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         />
       )}
 
+      {/* Move mode: sheet replaces the action bar */}
+      {movingAnchor && (
+        <MoveAnchorSheet
+          offset={moveOffset}
+          onUseBoatPosition={handleUseBoatPosition}
+          onSave={handleSaveMove}
+          onCancel={handleCancelMove}
+        />
+      )}
+
       {/* Stage 3 — ARMED: bottom action bar */}
-      {armed && (
+      {armed && !movingAnchor && (
         <div className="action-bar">
           <button className="action-btn" onClick={handleAdjustZone}>
             {t('adjustZone')}
+          </button>
+          <button className="action-btn" onClick={handleStartMoveAnchor}>
+            {t('moveAnchor')}
           </button>
           <button className="action-btn action-danger" onClick={() => setConfirmRaiseOpen(true)}>
             {t('raiseAnchor')}
@@ -602,6 +889,21 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
           danger
           onConfirm={handleRaiseAnchor}
           onCancel={() => setConfirmRaiseOpen(false)}
+        />
+      )}
+
+      {confirmFarMove && (
+        <ConfirmDialog
+          title={t('moveFarTitle')}
+          message={t('moveFarMessage', { n: Math.round(confirmFarMove.distance) })}
+          confirmLabel={t('save')}
+          cancelLabel={t('cancel')}
+          onConfirm={() => {
+            const pending = confirmFarMove.anchor;
+            setConfirmFarMove(null);
+            commitMove(pending);
+          }}
+          onCancel={() => setConfirmFarMove(null)}
         />
       )}
 

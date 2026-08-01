@@ -1,3 +1,25 @@
+// The Capacitor plugins declare `kotlin { jvmToolchain(21) }`, which makes
+// Gradle *locate a JDK 21 installation on disk* — it does not fall back to
+// the JVM running Gradle, so setting JAVA_HOME alone is not enough unless
+// that JVM is itself 21 and auto-detected. Without a match the build dies
+// with:
+//
+//   Cannot find a Java installation on your machine matching:
+//   {languageVersion=21, ...}. Toolchain download repositories have not
+//   been configured.
+//
+// This resolver lets Gradle fetch a JDK 21 itself when none is installed,
+// so a fresh machine builds without manual JDK juggling. To use a JDK you
+// already have instead (and skip the download), point Gradle at it in
+// ~/.gradle/gradle.properties:
+//
+//   org.gradle.java.installations.paths=C:/Program Files/Android/Android Studio/jbr
+//
+// `gradlew -q javaToolchains` lists everything Gradle can currently find.
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
+}
+
 include ':app'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')

@@ -14,17 +14,40 @@ Live setup:
 
 ## Prerequisites
 
-### JAVA_HOME must point at Java 21
+### Java 21 — two separate requirements
 
-Gradle 8.14.3 cannot run on Java 25. With a newer JDK first on the path the
-build fails with a message that never mentions Java:
+**1. The JVM that runs Gradle.** Gradle 8.14.3 cannot run on Java 25. With a
+newer JDK first on the path the build fails with a message that never mentions
+Java:
 
 ```
 Unsupported class file major version 69
 ```
 
-Point `JAVA_HOME` at the JBR bundled with Android Studio, which is Java 21 and
-matches `sourceCompatibility VERSION_21` in `capacitor.build.gradle`:
+**2. A JDK 21 that Gradle can find on disk.** The Capacitor plugins declare
+`kotlin { jvmToolchain(21) }`, a *toolchain* request: Gradle looks for a
+matching JDK installation and does **not** fall back to the JVM it is running
+on. Setting `JAVA_HOME` alone does not satisfy this unless that JVM is itself
+21 and gets auto-detected. The failure looks like:
+
+```
+Cannot find a Java installation on your machine matching:
+{languageVersion=21, ...}. Toolchain download repositories have not been configured.
+```
+
+`android/settings.gradle` applies the Foojay resolver so Gradle downloads a
+JDK 21 itself when none is found. To use one you already have instead, add to
+`~/.gradle/gradle.properties`:
+
+```properties
+org.gradle.java.installations.paths=C:/Program Files/Android/Android Studio/jbr
+```
+
+Check what Gradle can see with `gradlew -q javaToolchains`, and run
+`gradlew --stop` after changing `JAVA_HOME` — a daemon started with the old
+value survives and keeps using it.
+
+For requirement 1, point `JAVA_HOME` at the JBR bundled with Android Studio:
 
 ```bat
 :: Windows, permanent — reopen the terminal afterwards

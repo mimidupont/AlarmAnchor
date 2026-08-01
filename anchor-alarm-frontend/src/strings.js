@@ -75,6 +75,24 @@ export const strings = {
     sheetError: 'Error: {msg}',
     close: 'Close',
 
+    // Move anchor
+    moveAnchor: 'Move anchor',
+    moveAnchorHint: 'Drag the anchor to its real position',
+    useBoatPosition: 'Use boat position',
+    save: 'Save',
+    anchorMoved: 'Moved {d} m · {brg}',
+    moveFarTitle: 'Move the anchor there?',
+    moveFarMessage: 'That is {n} m from the boat.',
+
+    // Zone margin
+    zoneEdge: 'Edge',
+    metersOutside: '{n} m outside',
+
+    // GPS track
+    trackOff: 'Track off',
+    trackLastHour: 'Track 1 h',
+    trackAll: 'Track all',
+
     // Zone editor sheet
     zoneModeCircle: 'Circle',
     zoneModeShape: 'Shape',
@@ -174,6 +192,24 @@ export const strings = {
     sheetNoFix: 'Aucun fix',
     sheetError: 'Erreur : {msg}',
     close: 'Fermer',
+
+    // Move anchor
+    moveAnchor: "Déplacer l'ancre",
+    moveAnchorHint: "Faites glisser l'ancre vers sa position réelle",
+    useBoatPosition: 'Utiliser la position du bateau',
+    save: 'Enregistrer',
+    anchorMoved: 'Déplacée de {d} m · {brg}',
+    moveFarTitle: "Déplacer l'ancre ici ?",
+    moveFarMessage: "C'est à {n} m du bateau.",
+
+    // Zone margin
+    zoneEdge: 'Bord',
+    metersOutside: '{n} m hors zone',
+
+    // GPS track
+    trackOff: 'Trace masquée',
+    trackLastHour: 'Trace 1 h',
+    trackAll: 'Trace complète',
 
     // Zone editor sheet
     zoneModeCircle: 'Cercle',

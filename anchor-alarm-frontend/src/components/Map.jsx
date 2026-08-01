@@ -7,7 +7,14 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 import 'leaflet-draw';
 import useAnchorRadius from '../hooks/useAnchorRadius';
-import { distanceMeters, bearingDegrees, circlePolygonPoints, zoneRadiusMeters } from '../utils/geo';
+import {
+  distanceMeters,
+  bearingDegrees,
+  circlePolygonPoints,
+  zoneRadiusMeters,
+  zoneMarginMeters,
+  nearestZonePoint
+} from '../utils/geo';
 import ConfirmDialog from './ConfirmDialog';
 import TopStrip from './TopStrip';
 import InstrumentPanel from './InstrumentPanel';
@@ -73,6 +80,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   const accuracyCircle = useRef(null);
   const anchorMarker = useRef(null);
   const anchorLine = useRef(null);
+  const edgeLine = useRef(null);
   // We only ever auto-center/zoom the map once, on the very first GPS fix.
   // After that we leave the user's pan/zoom completely alone — the marker
   // still moves, but the map view is never touched again automatically.
@@ -165,6 +173,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
       hasCenteredMap.current = false;
       anchorMarker.current = null;
       anchorLine.current = null;
+      edgeLine.current = null;
     };
   }, []);
 
@@ -513,11 +522,56 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // Armed = anchor set + zone confirmed + not currently editing the zone.
   const armed = Boolean(anchor) && zone && zone.length >= 3 && !zoneEditing;
 
-  const panelState = alarmed
-    ? 'danger'
-    : anchorDistance !== null && anchorDistance > 0.8 * effectiveRadius
-      ? 'warn'
-      : 'ok';
+  // Signed room left before the boat crosses the boundary; drives both the
+  // readout and the panel color. The 8 m floor on the warn threshold
+  // matters on a tight zone: 15% of 15 m is 2 m, inside GPS noise, so it
+  // would never warn before the alarm itself fired.
+  const margin =
+    boatLocation && zone && zone.length >= 3
+      ? zoneMarginMeters(boatLocation.latitude, boatLocation.longitude, zone)
+      : null;
+  const warnThreshold = Math.max(8, 0.15 * effectiveRadius);
+
+  // Thin line from the boat to the closest point on the boundary, shown
+  // only when the margin is inside the warn threshold — it makes "which
+  // way is trouble" obvious at a glance. Single reused layer, moved in
+  // place like the anchor line.
+  useEffect(() => {
+    if (!map.current) return;
+    const show =
+      boatLocation && zone && zone.length >= 3 && margin !== null && margin < warnThreshold;
+
+    if (!show) {
+      if (edgeLine.current) {
+        map.current.removeLayer(edgeLine.current);
+        edgeLine.current = null;
+      }
+      return;
+    }
+
+    const target = nearestZonePoint(boatLocation.latitude, boatLocation.longitude, zone);
+    if (!target) return;
+    const pts = [[boatLocation.latitude, boatLocation.longitude], target];
+
+    if (!edgeLine.current) {
+      edgeLine.current = L.polyline(pts, {
+        color: margin < 0 ? '#e24b4a' : '#ef9f27',
+        weight: 2,
+        opacity: 0.9,
+        interactive: false
+      }).addTo(map.current);
+    } else {
+      edgeLine.current.setLatLngs(pts);
+      edgeLine.current.setStyle({ color: margin < 0 ? '#e24b4a' : '#ef9f27' });
+    }
+  }, [boatLocation, zone, margin, warnThreshold]);
+
+  const panelState =
+    alarmed || (margin !== null && margin < 0)
+      ? 'danger'
+      : margin !== null && margin < warnThreshold
+        ? 'warn'
+        : 'ok';
 
   return (
     <div className="map-container">
@@ -542,7 +596,7 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
           distance={anchorDistance}
           bearing={anchorBearing}
           radius={effectiveRadius}
-          accuracy={boatLocation?.accuracy}
+          margin={margin}
           state={panelState}
         />
       )}

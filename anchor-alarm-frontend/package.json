@@ -25,7 +25,7 @@
     "eject": "react-scripts eject",
     "android:prepare": "npm run build && npx cap sync android",
     "android": "npm run android:prepare && npx cap open android",
-    "release:android": "npm run android:prepare && cd android && ./gradlew assembleRelease",
+    "release:android": "npm run android:prepare && bash scripts/build-release-apk.sh",
     "distribute:android": "bash scripts/distribute-android.sh",
     "ship:android": "npm run release:android && npm run distribute:android"
   },

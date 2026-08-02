@@ -115,6 +115,7 @@ function parseSnapshot(raw, { now = Date.now(), idleTtlMs = Infinity } = {}) {
       zone: Array.isArray(value.zone) ? value.zone.filter(isFinitePair) : [],
       // Every live location belonged to a socket of the previous process.
       locations: {},
+      deviceSockets: {},
       alarmed: !!value.alarmed,
       acknowledged: !!value.acknowledged,
       anchor: isValidAnchor(value.anchor) ? value.anchor : null,

@@ -27,6 +27,7 @@ import {
   nextRecoveryInterval,
   sessionErrorAction
 } from './utils/alarm';
+import { ensureDeviceId, initDeviceId } from './utils/deviceId';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -230,6 +231,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Reconcile the durable (native Preferences) copy of the device ID once
+  // at startup. ensureDeviceId() below is synchronous and already has a
+  // usable value, so nothing ever waits on this.
+  useEffect(() => {
+    initDeviceId();
+  }, []);
+
+  // Every join carries the stable device ID: the server keys the session's
+  // live positions by it rather than by socket.id, so a night of flapping
+  // signal shows one boat marker instead of one per reconnect.
+  const emitJoin = (socket, session) => {
+    if (!socket || !session) return;
+    socket.emit('join-session', { ...session, deviceId: ensureDeviceId() });
+  };
+
   const setAlarmedState = (value) => {
     alarmedRef.current = value;
     setAlarmed(value);
@@ -298,7 +314,7 @@ export default function App() {
 
       const socket = socketRef.current;
       if (socket) {
-        socket.emit('join-session', sessionRef.current);
+        emitJoin(socket, sessionRef.current);
         if (zoneRef.current && zoneRef.current.length >= 3) {
           socket.emit('update-zone', { zone: zoneRef.current });
         }
@@ -343,7 +359,7 @@ export default function App() {
       // Re-join the session after a reconnection, otherwise the server
       // no longer routes our updates and never checks the alarm.
       if (sessionRef.current) {
-        newSocket.emit('join-session', sessionRef.current);
+        emitJoin(newSocket, sessionRef.current);
       } else if (joinParamRef.current) {
         // Arrived via a scanned QR link (?join=<ID>): join as remote
         // directly. The 'Session not found' error path returns to the
@@ -352,7 +368,7 @@ export default function App() {
         joinParamRef.current = null;
         sessionRef.current = { sessionId: joinId, role: 'remote' };
         setSessionId(joinId);
-        newSocket.emit('join-session', sessionRef.current);
+        emitJoin(newSocket, sessionRef.current);
         setView('remote');
       }
     });
@@ -537,10 +553,7 @@ export default function App() {
     // an app restart would otherwise have lost.
     if (roleInput === 'main') restoreTrack(sessionIdInput);
 
-    socket.emit('join-session', {
-      sessionId: sessionIdInput,
-      role: roleInput
-    });
+    emitJoin(socket, sessionRef.current);
 
     if (roleInput === 'main') {
       setView('main');
@@ -584,7 +597,7 @@ export default function App() {
       // it shows the share step (ID + QR) until "Open the map".
       setSessionId(data.sessionId);
       sessionRef.current = { sessionId: data.sessionId, role: 'main' };
-      socket.emit('join-session', sessionRef.current);
+      emitJoin(socket, sessionRef.current);
       startGpsTracking();
       setCreatedSessionId(data.sessionId);
     } catch (err) {

@@ -147,6 +147,17 @@ const isValidLocation = (loc) =>
   Math.abs(loc.latitude) <= 90 &&
   Math.abs(loc.longitude) <= 180;
 
+// A client-supplied device ID. Anything unusable falls back to socket.id at
+// the call site; anything oversized is rejected rather than truncated, so a
+// hostile client cannot bloat the session map with near-identical keys.
+const DEVICE_ID_MAX_LENGTH = 64;
+const normalizeDeviceId = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > DEVICE_ID_MAX_LENGTH) return null;
+  return trimmed;
+};
+
 const isValidZone = (zone) =>
   Array.isArray(zone) &&
   zone.every(
@@ -181,7 +192,11 @@ app.post('/api/sessions', (req, res) => {
   const sessionId = generateSessionId();
   sessions.set(sessionId, {
     zone: [],
+    // Live positions, keyed by stable device ID (see normalizeDeviceId).
     locations: {},
+    // deviceId -> the socket.id currently representing it. Runtime only;
+    // never snapshotted, since every socket dies with the process.
+    deviceSockets: {},
     alarmed: false,
     // Once acknowledged, the alarm stays silent until the boat re-enters
     // the zone (re-arming), instead of re-firing on every GPS fix.
@@ -220,7 +235,7 @@ io.on('connection', (socket) => {
 
   // Join a session
   socket.on('join-session', (data) => {
-    const { sessionId, role } = data; // role: 'main' or 'remote'
+    const { sessionId, role } = data || {}; // role: 'main' or 'remote'
     const session = sessions.get(sessionId);
 
     if (!session) {
@@ -228,12 +243,23 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Identity outlives the socket. Falling back to socket.id keeps a
+    // client from an older build working — it just gets the old
+    // one-marker-per-reconnect behaviour until it updates.
+    const deviceId = normalizeDeviceId(data && data.deviceId) || socket.id;
+
     socket.join(sessionId);
     socket.sessionId = sessionId;
     socket.role = role;
+    socket.deviceId = deviceId;
+    if (!session.deviceSockets) session.deviceSockets = {};
+    // A reconnect (or a second tab) replaces the previous socket for this
+    // device. The location entry is keyed by deviceId, so it carries over
+    // untouched instead of turning into a second boat.
+    session.deviceSockets[deviceId] = socket.id;
     touchSession(session);
 
-    console.log(`Client ${socket.id} joined session ${sessionId} as ${role}`);
+    console.log(`Client ${socket.id} joined session ${sessionId} as ${role} (device ${deviceId})`);
 
     // Send current state to new client
     // The track ships with the join payload so a remote monitor opening at
@@ -246,8 +272,9 @@ io.on('connection', (socket) => {
       track: session.track
     });
 
-    // Notify others in session
-    io.to(sessionId).emit('client-joined', { clientId: socket.id, role });
+    // Notify others in session. clientId is kept alongside deviceId for one
+    // release: testers will be running mixed builds during the beta.
+    io.to(sessionId).emit('client-joined', { clientId: deviceId, deviceId, role });
   });
 
   // Update zone (from main app)
@@ -316,7 +343,10 @@ io.on('connection', (socket) => {
 
     if (!session || !isValidLocation(location)) return;
 
-    session.locations[socket.id] = location;
+    // Keyed by device, not by socket: a reconnect updates the same entry
+    // instead of adding a marker.
+    const deviceId = socket.deviceId || socket.id;
+    session.locations[deviceId] = location;
     touchSession(session);
 
     // Thin server-side rather than trusting the client to do it.
@@ -340,9 +370,12 @@ io.on('connection', (socket) => {
 
     session.alarmed = shouldAlarm;
 
-    // Broadcast location update to all clients in session
+    // Broadcast location update to all clients in session. clientId still
+    // carries the same value as deviceId for one release, so a remote
+    // monitor on an older build keeps working during the beta.
     io.to(socket.sessionId).emit('location-updated', {
-      clientId: socket.id,
+      clientId: deviceId,
+      deviceId,
       location,
       alarmed: shouldAlarm
     });
@@ -371,14 +404,27 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
 
-    if (socket.sessionId) {
-      const session = sessions.get(socket.sessionId);
-      if (session) {
-        delete session.locations[socket.id];
-      }
+    if (!socket.sessionId) return;
 
-      io.to(socket.sessionId).emit('client-left', { clientId: socket.id });
+    const session = sessions.get(socket.sessionId);
+    const deviceId = socket.deviceId || socket.id;
+
+    if (session) {
+      // Only clear the entry if this socket is still the device's current
+      // one. A flapping phone often reconnects before the old socket's
+      // disconnect fires, and without this guard that late event would
+      // delete the *fresh* position — the boat would vanish from every
+      // remote monitor while it was in fact reporting fine.
+      const current = session.deviceSockets && session.deviceSockets[deviceId];
+      if (!current || current === socket.id) {
+        delete session.locations[deviceId];
+        if (session.deviceSockets) delete session.deviceSockets[deviceId];
+        io.to(socket.sessionId).emit('client-left', { clientId: deviceId, deviceId });
+      }
+      return;
     }
+
+    io.to(socket.sessionId).emit('client-left', { clientId: deviceId, deviceId });
   });
 
   // Error handling

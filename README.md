@@ -128,7 +128,8 @@ npm start
 ## ☁️ Deployment
 
 ### Quick Deploy (Free Tier)
-1. Backend → [Render.com](https://render.com) (Node.js)
+1. Backend → [Fly.io](https://fly.io) (Node.js, one always-on machine — see
+   [`anchor-alarm-backend/DEPLOY_FLY.md`](anchor-alarm-backend/DEPLOY_FLY.md))
 2. Frontend → [Vercel.com](https://vercel.com) (React)
 3. Takes ~5 minutes total
 
@@ -181,7 +182,7 @@ Current MVP has no authentication (anyone with Session ID can view). For product
 ## 🚀 Next Steps
 
 1. **Develop locally** (Windows laptop)
-2. **Deploy to cloud** (Render + Vercel)
+2. **Deploy to cloud** (Fly.io + Vercel)
 3. **Test on Android**
 4. **Add features** (notifications, history, etc)
 5. **Deploy to Play Store** (if needed)

@@ -11,6 +11,7 @@
     "@capacitor/geolocation": "^8.2.0",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/local-notifications": "^8.2.1",
+    "@capacitor/preferences": "^8.0.1",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
     "qrcode.react": "^4.2.0",
@@ -21,7 +22,8 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
-    "test": "react-scripts test",
+    "test": "react-scripts test --watchAll=false",
+    "test:watch": "react-scripts test",
     "eject": "react-scripts eject",
     "android:prepare": "npm run build && npx cap sync android",
     "android": "npm run android:prepare && npx cap open android",

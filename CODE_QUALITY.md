@@ -37,9 +37,13 @@ const sessions = new Map();
 
 **Design Decisions:**
 - `Map` chosen over object for O(1) lookups
-- Auto-cleanup every hour (prevents memory leaks)
-- Session TTL prevents stale data accumulation
-- Unique 9-character alphanumeric IDs (sufficient for MVP, 36^9 combinations)
+- Swept hourly, but expiry is **24 h of inactivity** — expiring on age would
+  delete an overnight anchor watch out from under a live alarm
+- Snapshotted to `$DATA_DIR/sessions.json`, so the Map survives a restart
+  (see `snapshot.js`)
+- 9-character IDs, crypto-random from a 32-character unambiguous alphabet
+  (no I/O/0/1): 32^9 ≈ 3.5 × 10^13 combinations, an unguessable bearer
+  token — obscurity, not authentication
 
 ### Real-Time Synchronization
 ```javascript
@@ -63,16 +67,22 @@ if (!zone || zone.length < 3) return false;
 **Socket error recovery:**
 ```javascript
 socket.on('error', (error) => {
-  console.error(`Socket error for ${socket.id}:`, error);
-  // Logs but doesn't crash server
+  console.error(`${tag(socket.sessionId, socket.deviceId)} socket error:`, error);
+  // Logs but doesn't crash the server
 });
 ```
 
-**CORS enabled for all origins (MVP):**
+**Process-level crash handling:** `uncaughtException` and
+`unhandledRejection` log the stack, force-flush the session snapshot and
+exit non-zero so Fly restarts cleanly — never swallow and continue with
+state that may have been corrupted mid-throw.
+
+**CORS restricted to known origins:**
 ```javascript
-app.use(cors());
-// Production: restrict to specific domains
+app.use(cors({ origin: corsOrigin })); // allowlist, override via ALLOWED_ORIGINS
 ```
+Requests with no `Origin` header stay allowed: that is what the healthcheck
+and native HTTP stacks send, and refusing them would break every APK.
 
 ---
 
@@ -110,23 +120,32 @@ const [alarmed, setAlarmed] = useState(false);
 
 ### GPS Tracking
 
+On a real device this is a **foreground service**, not the browser
+geolocation API — Android stops delivering `watchPosition` fixes once the
+screen is off, which is precisely when an anchor watch matters:
+
 ```javascript
-gpsWatchId.current = navigator.geolocation.watchPosition(
-  (position) => { /* update */ },
-  (error) => { /* handle error */ },
-  {
-    enableHighAccuracy: true,
-    timeout: 10000,
-    maximumAge: 0
-  }
+// @capacitor-community/background-geolocation — persistent notification
+const id = await BackgroundGeolocation.addWatcher(
+  { backgroundTitle, backgroundMessage, requestPermissions: true,
+    stale: false, distanceFilter: 0 },
+  (position, err) => { if (position) handleGpsFix(position); }
 );
 ```
 
+`@capacitor/geolocation` (`enableHighAccuracy: true`, `timeout: 10000`,
+`maximumAge: 0`) is the fallback in a browser and if the watcher cannot
+start.
+
 **Configuration Choices:**
-- `enableHighAccuracy: true` - Trading battery for precision (boat safety critical)
-- `timeout: 10000` - 10 second GPS timeout (reasonable for GPS chips)
-- `maximumAge: 0` - Always get fresh GPS fix (not cached)
-- `watchPosition` - Continuous updates vs `getCurrentPosition`
+- Foreground service - keeps fixes coming with the screen off, all night
+- `enableHighAccuracy: true` - trading battery for precision (safety critical)
+- `maximumAge: 0` - always a fresh fix, never a cached one
+- `distanceFilter: 0` - report every fix; thinning happens in `utils/track.js`
+
+> Testers must grant location **"Allow all the time"**. On Android 11+ that
+> cannot be granted from the first dialog — Settings → Apps → Anchor Alarm →
+> Permissions → Location. Without it tracking stops with the screen.
 
 ### Map Implementation
 
@@ -139,49 +158,52 @@ gpsWatchId.current = navigator.geolocation.watchPosition(
 
 ### Alarm System
 
+**The alarm decision is local, on the boat phone.** Every GPS fix goes
+through `handleGpsFix` in `App.jsx`, which calls the pure `decideAlarm()` in
+`utils/alarm.js` before anything touches the network:
+
 ```javascript
-const triggerAlarm = () => {
-  // 1. Play audio
-  if (alarmAudioRef.current) {
-    alarmAudioRef.current.play().catch(err => { /* graceful fallback */ });
-  }
-  
-  // 2. Browser notification
-  if (Notification.permission === 'granted') {
-    new Notification('⚠️ ANCHOR ALARM', {
-      requireInteraction: true  // User must dismiss
-    });
-  }
-  
-  // 3. Vibration
-  if (navigator.vibrate) {
-    navigator.vibrate([500, 200, 500, 200, 500]);
-  }
-};
+// utils/alarm.js — no socket, no server state, no connection flag
+const next = decideAlarm({
+  latitude, longitude,
+  zone: zoneRef.current,
+  alarmed: alarmedRef.current,
+  acknowledged: acknowledgedRef.current
+});
+if (next.fire) triggerAlarmSequence();
 ```
 
-**Multi-channel approach ensures:**
-- Works in all scenarios (silent, no vibration, etc.)
-- Graceful degradation on unsupported devices
-- `requireInteraction: true` prevents accidental dismiss
-- Pattern: long-short-long pattern (SOS) for marine context
+This is the property that makes the app safe: losing the internet at anchor
+does not disable the alarm. It is covered by `utils/alarm.test.js`,
+including a suite that runs with `fetch` throwing.
+
+`triggerAlarmSequence()` then raises the alarm through Capacitor — a native
+`LocalNotifications` entry on a high-importance channel with `alarm.mp3` and
+`ongoing: true`, plus repeated `Haptics` impacts. Native notifications, not
+the Web Notification API: this ships as an Android app and has to wake
+someone asleep with the screen off.
 
 ### Event Handling
 
 ```javascript
 socket.on('alarm-status-changed', (data) => {
+  // Only ever a mirror. The boat phone has usually already decided locally
+  // and fired; this stops a remote monitor from double-firing.
+  const alreadyAlarmed = alarmedRef.current;
   setAlarmed(data.alarmed);
-  if (data.alarmed) {
-    triggerAlarm();
-  }
+  if (data.alarmed && !alreadyAlarmed) triggerAlarmSequence();
 });
 ```
 
-**Non-blocking Updates:**
-- Alarm check happens on server
-- Client just receives notification
-- Prevents desync between devices
-- Single source of truth (backend)
+**Who decides what:**
+- The boat phone (`role: 'main'`) is the alarm and decides on its own GPS.
+- The server runs the same check so **remote monitors** learn about an alarm
+  they cannot see for themselves.
+- Server messages never disarm the boat phone. `sessionErrorAction()` makes
+  a lost session trigger recovery on `main` (mint a new session, re-push
+  local state, keep tracking) and only sends a `remote` back to the picker.
+- On the boat phone a server `state-update` may fill in zone/anchor it does
+  not have, never overwrite what it does.
 
 ---
 
@@ -207,18 +229,23 @@ const canViewSession = checkPermission(userId, sessionId);
 
 ### CORS Security
 
-**Current:**
 ```javascript
-app.use(cors()); // Allow all origins
+const ORIGINS = allowedOrigins.length ? allowedOrigins : DEFAULT_ALLOWED_ORIGINS;
+// Vercel frontend + capacitor://localhost + http://localhost (webview scheme)
+app.use(cors({ origin: corsOrigin }));
 ```
 
-**Production (Phase 1):**
-```javascript
-app.use(cors({
-  origin: process.env.FRONTEND_URL,
-  credentials: true
-}));
-```
+Override with the `ALLOWED_ORIGINS` env var rather than editing the list.
+**Verify against a real APK before shipping** — a missing origin breaks
+every native client at once. Rejections are logged (`[cors] rejected
+origin …`).
+
+### Abuse limits
+- `express-rate-limit` on `POST /api/sessions`: 30 per IP per hour,
+  deliberately loose because testers on one marina wifi share an IP
+- `MAX_SESSIONS` 500, least-recently-active evicted before any 503
+- 20 `join-session` attempts per socket per minute
+- 256-vertex zone cap, 512 KB socket payload ceiling, 16 KB JSON body
 
 ---
 
@@ -227,7 +254,11 @@ app.use(cors({
 ### Backend
 
 **Memory Efficiency:**
-- Sessions cleaned every 1 hour
+- Sessions expire after **24 h of inactivity**, not 1 h after creation — an
+  earlier version deleted overnight anchor watches out from under the alarm
+- Snapshotted to disk every 30 s (dirty-flag) and on SIGTERM, so a restart
+  is not a data-loss event
+- Hard cap of 500 sessions, least-recently-active evicted first
 - No duplicate location storage
 - Uses Map instead of Object (O(1) lookup)
 
@@ -290,21 +321,24 @@ describe('Map component', () => {
 
 ### Backend Deployment
 
-**Render.com chosen because:**
-- Auto-deploys from GitHub
-- Free tier: 0.5 CPU, 512 MB RAM (sufficient for MVP)
-- Auto-scales on Pro plan
-- Simplest setup (no DevOps needed)
+**Fly.io chosen because** (see `anchor-alarm-backend/DEPLOY_FLY.md`):
+- One always-on `shared-cpu-1x` / 256 MB machine, no cold start — an alarm
+  relay must not be waking up when the first fix arrives
+- Native WebSocket support for Socket.io
+- A volume mounted at `/data` for the session snapshot, in the same region
 
-**Scaling Path:**
+**Deliberately one machine.** Never `fly scale count 2`: sessions live in
+that machine's memory and on its own volume, and a second machine would
+receive joins for sessions it can neither find nor read.
+
+**Scaling path** — none of this is needed at beta size (20 boats plus ~20
+remote monitors is ~40 sockets and 2–4 messages/second):
 ```
-MVP (In-memory)
+Snapshot file (now)
+    ↓  only past a few hundred concurrent sessions
+Shared store (Redis) + Socket.io adapter, dropping the volume
     ↓
-Growth Phase (Add MongoDB)
-    ↓
-Scale Phase (Add Redis cache + Load balancer)
-    ↓
-Production (Kubernetes)
+Authentication, then horizontal scaling
 ```
 
 ### Frontend Deployment
@@ -320,9 +354,15 @@ Production (Kubernetes)
 ## 📈 Monitoring & Debugging
 
 ### Backend Logging
+Every session-scoped line carries the session and device ID, so one boat's
+night is reconstructable with a single grep of `fly logs`:
 ```javascript
-console.log(`Client ${socket.id} joined session ${sessionId}`);
+console.log(`${tag(sessionId, deviceId)} joined as ${role} (socket ${socket.id})`);
+// [session K7QM2XPWA][device 6f2c…] alarm RAISED at 43.08312,6.15794
 ```
+Per-connect/disconnect chatter is at debug level (`LOG_LEVEL=debug`) so 40
+flapping sockets cannot bury it. `GET /health` reports uptime, session
+count, socket count and the last snapshot time.
 
 **Production upgrade:**
 ```javascript
@@ -368,20 +408,31 @@ When modifying this code, ensure:
 ## 🐛 Known Limitations & Improvements
 
 ### Current Limitations
-1. **No persistence**: Data lost on server restart
-2. **No authentication**: Anyone with Session ID can view
-3. **In-memory only**: Max ~1000 sessions before memory issues
-4. **Single server**: No horizontal scaling
+1. **No authentication**: anyone with the session ID can watch. The 9-char
+   ID from a 32-character alphabet is an unguessable bearer token (32^9),
+   which is fine among friends and required to change before any public
+   launch.
+2. **Single server by design**: sessions live in one machine's memory and on
+   its volume. Fine at beta size; horizontal scaling needs a shared store.
+3. **Android only**: no iOS project in this repo.
+4. **Session state is a snapshot, not a database**: up to 30 s of server
+   state can be lost to a hard kill. The boat phone holds the authoritative
+   track and re-pushes it, so this costs remote monitors detail, never the
+   alarm.
 
-### Planned Improvements
-1. Add database (MongoDB)
-2. Add authentication (JWT)
-3. Add rate limiting
-4. Add logging (Winston)
-5. Add monitoring (Sentry)
-6. Add tests (Jest)
-7. Add CI/CD (GitHub Actions)
-8. Add Docker containerization
+### Done during beta hardening
+- ✅ Snapshot persistence across restarts (`snapshot.js`, Fly volume)
+- ✅ Boat phone never stops GPS on a server error; recovers the session
+- ✅ Stable device IDs instead of `socket.id`
+- ✅ Rate limiting, session cap, CORS allowlist, payload bounds
+- ✅ Crash handlers and session-scoped logging
+- ✅ Tests (Jest on the frontend, `node --test` on the backend)
+
+### Still planned
+1. Authentication before any public launch
+2. Monitoring (Sentry) if 20 testers is not enough signal
+3. CI/CD (GitHub Actions) running both test suites
+4. iOS, if there is demand
 
 ---
 

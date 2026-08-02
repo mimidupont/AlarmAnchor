@@ -151,28 +151,39 @@ expo build:android
 
 ## ☁️ Production Deployment
 
-### Option 1: Render (Recommended - Easiest)
+### Option 1: Fly.io + Vercel (what this project actually uses)
 
-#### Deploy Backend
+#### Deploy Backend → Fly.io
 
-1. Go to [render.com](https://render.com)
-2. Sign up (free tier available)
-3. Click "New +" → "Web Service"
-4. Connect your GitHub repo (or upload code)
-5. Select branch: `main`
-6. Configure:
-   - **Name**: `anchor-alarm-backend`
-   - **Environment**: `Node`
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
-7. Click "Create Web Service"
-8. Copy the deployed URL (e.g., `https://anchor-alarm-backend.onrender.com`)
+The full, current instructions live in
+[`anchor-alarm-backend/DEPLOY_FLY.md`](anchor-alarm-backend/DEPLOY_FLY.md).
+In short:
+
+```bash
+cd anchor-alarm-backend
+fly auth login
+fly launch --copy-config --no-deploy    # uses the committed fly.toml
+fly volumes create anchor_data --region cdg --size 1   # once, SAME region
+fly deploy
+fly scale count 1                       # exactly ONE machine, always
+curl https://<your-app>.fly.dev/health
+```
+
+Why Fly rather than a generic Node host: one always-on `shared-cpu-1x` /
+256 MB machine with no cold start (an alarm relay must not be waking up when
+the first fix arrives), native WebSocket support, and a volume for the
+session snapshot.
+
+> ⚠️ **Never `fly scale count 2`.** Sessions live in that machine's memory
+> and on its own volume; a second machine would receive joins for sessions
+> it can neither find nor read.
 
 #### Deploy Frontend
 
-1. In `anchor-alarm-frontend` folder, update `.env`:
+1. In `anchor-alarm-frontend` folder, update `.env.production`:
    ```
-   REACT_APP_BACKEND_URL=https://anchor-alarm-backend.onrender.com
+   REACT_APP_BACKEND_URL=https://<your-app>.fly.dev
+   REACT_APP_FRONTEND_URL=https://<your-frontend>.vercel.app
    ```
 
 2. Go to [vercel.com](https://vercel.com)
@@ -185,36 +196,19 @@ expo build:android
    - **Output Directory**: `build`
 7. Add Environment Variable:
    - Key: `REACT_APP_BACKEND_URL`
-   - Value: Your Render backend URL
+   - Value: your Fly backend URL
 8. Click "Deploy"
 
 Your app is now live! 🎉
 
-### Option 2: Heroku (Also Easy)
+After changing the backend origin, add the new frontend origin to the
+backend's CORS allowlist — otherwise the browser build is blocked:
 
 ```bash
-# Install Heroku CLI
-# https://devcenter.heroku.com/articles/heroku-cli
-
-# Login
-heroku login
-
-# Create backend app
-cd anchor-alarm-backend
-heroku create anchor-alarm-backend
-git push heroku main
-
-# Create frontend app
-cd ../anchor-alarm-frontend
-heroku create anchor-alarm-frontend
-git push heroku main
-
-# Get backend URL and update frontend .env
-heroku apps:info anchor-alarm-backend
-# Copy the URL, update frontend env var
+fly secrets set ALLOWED_ORIGINS="https://<your-frontend>.vercel.app,capacitor://localhost,http://localhost"
 ```
 
-### Option 3: Self-Hosted (AWS/DigitalOcean)
+### Option 2: Self-Hosted (AWS/DigitalOcean)
 
 ```bash
 # Backend (Node.js)
@@ -293,8 +287,14 @@ lsof -i :5000
 - **GPS Polling**: 10 seconds (configurable in App.jsx)
 - **Zone Sync**: Real-time via Socket.io
 - **Location Sync**: Real-time to all connected clients
-- **Memory**: In-memory storage (sessions cleaned up after 1 hour)
-- **Scalability**: Add MongoDB/PostgreSQL for persistence when needed
+- **Memory**: in-memory sessions, expiring after **24 h of inactivity** —
+  not 1 h after creation, which used to delete overnight anchor watches
+- **Persistence**: the session Map is snapshotted to `$DATA_DIR/sessions.json`
+  every 30 s and on shutdown, and read back at boot, so a restart or a
+  `fly deploy` does not lose active anchor watches
+- **Scalability**: a shared store (Redis) is only worth it past a few hundred
+  concurrent sessions; at beta size (~40 sockets) it would just conflict with
+  the volume
 
 ---
 
@@ -351,7 +351,7 @@ For issues:
 ## 🎯 Next Steps
 
 1. **Test locally** on Windows browser
-2. **Deploy to Render + Vercel** (takes 5 minutes)
+2. **Deploy to Fly.io + Vercel** (takes 5 minutes)
 3. **Test on Android phone**
 4. **Add authentication** (optional)
 5. **Add database persistence** (optional)

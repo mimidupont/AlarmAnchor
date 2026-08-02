@@ -21,7 +21,13 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { isPointInPolygon } from './utils/geo';
+import {
+  RECOVERY_MIN_INTERVAL_MS,
+  decideAlarm,
+  nextRecoveryInterval,
+  sessionErrorAction
+} from './utils/alarm';
+import { ensureDeviceId, initDeviceId } from './utils/deviceId';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -89,6 +95,10 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [gpsError, setGpsError] = useState(null);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
+  // Set to the new session ID after a successful recovery, so the user can
+  // re-share the code. Dismissible, and deliberately never a modal — the
+  // map must stay usable.
+  const [recoveryNotice, setRecoveryNotice] = useState(null);
   const gpsWatchId = useRef(null);
   const pendingLeaveRef = useRef(null);
   // Latest locations, readable from socket handlers registered once
@@ -112,6 +122,13 @@ export default function App() {
   const zoneRef = useRef([]);
   const alarmedRef = useRef(false);
   const acknowledgedRef = useRef(false);
+  // The anchor, readable synchronously during session recovery (which has
+  // to re-push it to the new session without waiting for a render).
+  const anchorRef = useRef(null);
+  // Session-recovery pacing — see recoverSession below.
+  const recoveryInFlight = useRef(false);
+  const recoveryAt = useRef(0);
+  const recoveryInterval = useRef(RECOVERY_MIN_INTERVAL_MS);
 
   useEffect(() => {
     locationsRef.current = locations;
@@ -120,6 +137,10 @@ export default function App() {
   useEffect(() => {
     zoneRef.current = zone;
   }, [zone]);
+
+  useEffect(() => {
+    anchorRef.current = anchor;
+  }, [anchor]);
 
   const t = useMemo(() => makeT(lang), [lang]);
   // Long-lived callbacks (socket handlers, GPS watcher) read the current
@@ -168,6 +189,19 @@ export default function App() {
     }
   };
 
+  // Session recovery mints a new session ID, and the track is stored under
+  // a per-session key. Move it across so an app restart after a recovery
+  // still finds the night's track.
+  const retargetTrackStorage = (oldId, newId) => {
+    if (!newId || oldId === newId) return;
+    try {
+      if (oldId) localStorage.removeItem(trackStorageKey(oldId));
+    } catch (err) {
+      // Best-effort; a stale key just expires with the browser storage.
+    }
+    persistTrack(newId);
+  };
+
   const clearTrack = () => {
     const id = sessionRef.current?.sessionId;
     trackRef.current = [];
@@ -196,6 +230,21 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reconcile the durable (native Preferences) copy of the device ID once
+  // at startup. ensureDeviceId() below is synchronous and already has a
+  // usable value, so nothing ever waits on this.
+  useEffect(() => {
+    initDeviceId();
+  }, []);
+
+  // Every join carries the stable device ID: the server keys the session's
+  // live positions by it rather than by socket.id, so a night of flapping
+  // signal shows one boat marker instead of one per reconnect.
+  const emitJoin = (socket, session) => {
+    if (!socket || !session) return;
+    socket.emit('join-session', { ...session, deviceId: ensureDeviceId() });
+  };
 
   const setAlarmedState = (value) => {
     alarmedRef.current = value;
@@ -236,6 +285,64 @@ export default function App() {
     await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
   };
 
+  // Session recovery on the boat phone.
+  //
+  // The server losing our session — a deploy, a Fly host migration, an OOM,
+  // a healthcheck restart — must be a cosmetic event. GPS keeps running,
+  // the map stays up, and the anchor, zone and track are never touched.
+  // All this does is mint a new session and re-push the local state so
+  // remote monitors can find us again. If every step of it fails, the boat
+  // phone is still fully armed on local GPS and the status pill says
+  // "Offline — local only".
+  const recoverSession = async () => {
+    if (recoveryInFlight.current) return;
+    const now = Date.now();
+    if (now - recoveryAt.current < recoveryInterval.current) return;
+    recoveryInFlight.current = true;
+    recoveryAt.current = now;
+
+    const previousId = sessionRef.current?.sessionId;
+    try {
+      // ?recovery=1 is purely diagnostic: it lets a post-mortem tell a
+      // recovery mint apart from a tester creating a session by hand.
+      const response = await fetch(`${BACKEND_URL}/api/sessions?recovery=1`, { method: 'POST' });
+      if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+      const data = await response.json();
+      if (!data?.sessionId) throw new Error('No session ID returned');
+
+      sessionRef.current = { sessionId: data.sessionId, role: 'main' };
+      setSessionId(data.sessionId);
+      retargetTrackStorage(previousId, data.sessionId);
+
+      const socket = socketRef.current;
+      if (socket) {
+        emitJoin(socket, sessionRef.current);
+        if (zoneRef.current && zoneRef.current.length >= 3) {
+          socket.emit('update-zone', { zone: zoneRef.current });
+        }
+        if (anchorRef.current) {
+          // resetTrack: false — this is the same anchoring, and the
+          // night's track has to survive the recovery.
+          socket.emit('update-anchor', { anchor: anchorRef.current, resetTrack: false });
+        }
+        if (trackRef.current.length) {
+          socket.emit('restore-track', { track: trackRef.current });
+        }
+      }
+
+      recoveryInterval.current = RECOVERY_MIN_INTERVAL_MS;
+      setRecoveryNotice(data.sessionId);
+      console.log('♻️ Session recovered as', data.sessionId);
+    } catch (err) {
+      // Back off, so a backend that is down hard does not turn the boat
+      // phone into a POST loop for the rest of the night.
+      console.warn('Session recovery failed:', err);
+      recoveryInterval.current = nextRecoveryInterval(recoveryInterval.current);
+    } finally {
+      recoveryInFlight.current = false;
+    }
+  };
+
   // Initialize Socket.io connection
   useEffect(() => {
     const newSocket = io(BACKEND_URL, {
@@ -254,7 +361,7 @@ export default function App() {
       // Re-join the session after a reconnection, otherwise the server
       // no longer routes our updates and never checks the alarm.
       if (sessionRef.current) {
-        newSocket.emit('join-session', sessionRef.current);
+        emitJoin(newSocket, sessionRef.current);
       } else if (joinParamRef.current) {
         // Arrived via a scanned QR link (?join=<ID>): join as remote
         // directly. The 'Session not found' error path returns to the
@@ -263,7 +370,7 @@ export default function App() {
         joinParamRef.current = null;
         sessionRef.current = { sessionId: joinId, role: 'remote' };
         setSessionId(joinId);
-        newSocket.emit('join-session', sessionRef.current);
+        emitJoin(newSocket, sessionRef.current);
         setView('remote');
       }
     });
@@ -275,10 +382,24 @@ export default function App() {
 
     newSocket.on('error', (errorMsg) => {
       console.error('❌ Socket error:', errorMsg);
+      const action = sessionErrorAction(sessionRef.current?.role, errorMsg);
+
+      if (action === 'recover') {
+        // The boat phone is the alarm. It must never stop GPS, leave the
+        // map, or clear the anchor/zone because of a server message — the
+        // server is only a relay for remote watchers. Re-mint the session
+        // in the background instead, and stay silent about it: the red
+        // error banner would be alarming and is not actionable.
+        recoverSession();
+        return;
+      }
+
       setError(tRef.current('errConnection', { msg: errorMsg }));
-      // Joining a non-existent/expired session: go back to the picker
-      // instead of showing an empty monitor that will never update.
-      if (errorMsg === 'Session not found') {
+
+      // A remote monitor with no session genuinely has nothing to show:
+      // go back to the picker instead of an empty monitor that will
+      // never update.
+      if (action === 'reset') {
         sessionRef.current = null;
         stopGpsTracking();
         setView('session');
@@ -287,20 +408,33 @@ export default function App() {
     });
 
     newSocket.on('state-update', (data) => {
-      setZone(data.zone);
-      zoneRef.current = data.zone;
-      // On the boat phone the map is driven directly by the local GPS
-      // watcher; don't let a server snapshot overwrite it.
-      if (sessionRef.current?.role !== 'main') {
+      const isMain = sessionRef.current?.role === 'main';
+      // On the boat phone, local state always wins. A server snapshot may
+      // FILL IN what we don't have — rejoining a session after an app
+      // restart — but must never overwrite it: session recovery joins a
+      // brand-new, empty session, and that must not wipe the live zone
+      // and anchor out from under an armed alarm.
+      if (!isMain || !zoneRef.current || zoneRef.current.length < 3) {
+        const nextZone = data.zone || [];
+        setZone(nextZone);
+        zoneRef.current = nextZone;
+      }
+      if (!isMain || !anchorRef.current) {
+        const nextAnchor = data.anchor || null;
+        setAnchor(nextAnchor);
+        anchorRef.current = nextAnchor;
+      }
+      // The map on the boat phone is driven directly by the local GPS
+      // watcher; don't let a server snapshot overwrite it either.
+      if (!isMain) {
         setLocations(data.locations);
         alarmedRef.current = data.alarmed;
         setAlarmed(data.alarmed);
       }
-      setAnchor(data.anchor || null);
       // A remote joining mid-session gets the whole night at once. The boat
       // phone keeps its own locally recorded track, which is authoritative
       // and survives the server being unreachable.
-      if (sessionRef.current?.role !== 'main' && Array.isArray(data.track)) {
+      if (!isMain && Array.isArray(data.track)) {
         trackRef.current = data.track;
         setTrack(data.track);
       }
@@ -421,10 +555,7 @@ export default function App() {
     // an app restart would otherwise have lost.
     if (roleInput === 'main') restoreTrack(sessionIdInput);
 
-    socket.emit('join-session', {
-      sessionId: sessionIdInput,
-      role: roleInput
-    });
+    emitJoin(socket, sessionRef.current);
 
     if (roleInput === 'main') {
       setView('main');
@@ -468,7 +599,7 @@ export default function App() {
       // it shows the share step (ID + QR) until "Open the map".
       setSessionId(data.sessionId);
       sessionRef.current = { sessionId: data.sessionId, role: 'main' };
-      socket.emit('join-session', sessionRef.current);
+      emitJoin(socket, sessionRef.current);
       startGpsTracking();
       setCreatedSessionId(data.sessionId);
     } catch (err) {
@@ -495,18 +626,18 @@ export default function App() {
 
     // Local alarm decision, mirroring the server's state machine: alarm
     // when outside the zone, stay silent after an acknowledgment, re-arm
-    // once back inside.
-    const currentZone = zoneRef.current;
-    if (currentZone && currentZone.length >= 3) {
-      const outside = !isPointInPolygon([latitude, longitude], currentZone);
-      if (!outside) {
-        acknowledgedRef.current = false;
-        if (alarmedRef.current) setAlarmedState(false);
-      } else if (!acknowledgedRef.current && !alarmedRef.current) {
-        setAlarmedState(true);
-        triggerAlarmSequence();
-      }
-    }
+    // once back inside. decideAlarm is pure and unit-tested (alarm.test.js)
+    // — this is the property that keeps the alarm armed with no server.
+    const next = decideAlarm({
+      latitude,
+      longitude,
+      zone: zoneRef.current,
+      alarmed: alarmedRef.current,
+      acknowledged: acknowledgedRef.current
+    });
+    acknowledgedRef.current = next.acknowledged;
+    if (next.alarmed !== alarmedRef.current) setAlarmedState(next.alarmed);
+    if (next.fire) triggerAlarmSequence();
 
     // Record the track after the alarm check, so nothing here can delay
     // or affect the alarm decision.
@@ -713,7 +844,11 @@ export default function App() {
     clearTrack();
     sessionRef.current = null;
     zoneRef.current = [];
+    anchorRef.current = null;
     acknowledgedRef.current = false;
+    recoveryAt.current = 0;
+    recoveryInterval.current = RECOVERY_MIN_INTERVAL_MS;
+    setRecoveryNotice(null);
     setCreatedSessionId(null);
     setView('session');
     setSessionId(null);
@@ -763,6 +898,15 @@ export default function App() {
         <div className="error-banner">
           ❌ {error}
           <button onClick={() => setError(null)}>×</button>
+        </div>
+      )}
+
+      {/* Session recovery notice. Non-blocking and dismissible on purpose:
+          the map and the alarm must stay usable while it is shown. */}
+      {recoveryNotice && (
+        <div className="notice-banner">
+          ♻️ {t('recoveredNotice', { id: recoveryNotice })}
+          <button onClick={() => setRecoveryNotice(null)}>×</button>
         </div>
       )}
 

@@ -1,16 +1,30 @@
 # Fly.io config for the anchor-alarm backend.
 #
-# IMPORTANT: sessions are stored in memory, so this app MUST run as a
-# single machine. Never `fly scale count 2` — a second machine would
-# receive joins for sessions it doesn't know about. For the same reason
-# the machine is always-on (auto_stop = "off"): stopping it would wipe
-# every active anchor watch.
+# IMPORTANT: this app MUST run as a single machine. Never `fly scale
+# count 2` — sessions live in this machine's memory and its own volume, so
+# a second machine would receive joins for sessions it doesn't know about
+# and could not read. The volume below makes that constraint *stronger*,
+# not weaker: Fly volumes are pinned to one machine.
+#
+# The machine stays always-on (auto_stop = "off") so an alarm never
+# cold-starts. A restart is now survivable — sessions are snapshotted to
+# the volume every 30 s and on SIGTERM — but it is still a gap in the
+# relay, and the boat phone's own GPS is what keeps the alarm armed.
 
 app = "alarmanchor-backend"
 primary_region = "cdg" # Paris — pick the region closest to your cruising grounds
 
 [env]
   PORT = "8080"
+  DATA_DIR = "/data"
+
+# One-time setup, in the SAME region as the machine:
+#   fly volumes create anchor_data --region cdg --size 1
+# 1 GB is far more than enough: 20 sessions with a full night of track is
+# a few MB.
+[[mounts]]
+  source = "anchor_data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8080

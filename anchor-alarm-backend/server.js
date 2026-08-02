@@ -3,6 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const crypto = require('crypto');
+const { readSnapshotSync, resolveDataDir, writeSnapshotSync } = require('./snapshot');
 
 const app = express();
 const server = http.createServer(app);
@@ -19,6 +20,72 @@ app.use(express.json());
 
 // Store active sessions: { sessionId: { zone, locations, alarmed, anchor } }
 const sessions = new Map();
+
+// Expiry is based on last activity, NOT creation time — an earlier version
+// deleted every session one hour after it was created, so an overnight
+// anchor watch silently lost its session and the alarm could never fire
+// again. A session anchored for days stays alive as long as location
+// updates keep coming in.
+const ONE_HOUR = 60 * 60 * 1000;
+const SESSION_IDLE_TTL = 24 * ONE_HOUR;
+
+// --- Snapshot persistence -------------------------------------------------
+// Sessions live in memory, which used to mean "do not redeploy during a
+// night at anchor". With 20 testers that is not a workable constraint, and
+// restarts you don't control (host migration, healthcheck, OOM) happen
+// anyway. The whole Map is snapshotted to disk on a dirty-flag timer and on
+// shutdown, and read back at boot.
+const DATA_DIR = resolveDataDir();
+const SNAPSHOT_INTERVAL_MS = 30 * 1000;
+let snapshotDirty = false;
+let lastSnapshotAt = null;
+
+const markDirty = () => {
+  snapshotDirty = true;
+};
+
+// `force` is for shutdown: write even if nothing changed since the last
+// timer tick, so the file always reflects the process's final state.
+const writeSnapshot = ({ force = false, reason = 'timer' } = {}) => {
+  if (!snapshotDirty && !force) return null;
+  try {
+    const result = writeSnapshotSync(DATA_DIR, sessions);
+    snapshotDirty = false;
+    lastSnapshotAt = result.savedAt;
+    console.log(
+      `[snapshot] wrote ${result.count} session(s), ${result.bytes} bytes (${reason})`
+    );
+    return result;
+  } catch (err) {
+    // A failed snapshot must never take the server down: the live sessions
+    // in memory are still serving every armed alarm.
+    console.error(`[snapshot] write failed (${reason}):`, err.message);
+    return null;
+  }
+};
+
+const restoreSnapshot = () => {
+  const { sessions: restored, dropped, error, missing } = readSnapshotSync(DATA_DIR, {
+    idleTtlMs: SESSION_IDLE_TTL
+  });
+
+  if (error) {
+    console.warn(`[snapshot] ignoring ${DATA_DIR}: ${error} — starting clean`);
+    return;
+  }
+  if (missing) {
+    console.log(`[snapshot] no snapshot in ${DATA_DIR} — starting clean`);
+    return;
+  }
+
+  for (const [sessionId, session] of restored.entries()) {
+    sessions.set(sessionId, session);
+  }
+  console.log(
+    `[snapshot] restored ${restored.size} session(s) from ${DATA_DIR}` +
+      (dropped ? `, dropped ${dropped} expired/invalid` : '')
+  );
+};
 
 // Helper: Generate session ID (9 chars, unambiguous alphabet, crypto-random —
 // Math.random().toString(36) could yield short IDs and is guessable)
@@ -63,9 +130,13 @@ const shouldRecordTrackPoint = (track, lat, lng, t) => {
   return haversineMeters(pLat, pLng, lat, lng) >= TRACK_MIN_MOVE_M;
 };
 
-// Helper: mark a session as recently used (drives expiry)
+// Helper: mark a session as recently used (drives expiry). Every mutating
+// event goes through here, so it is also where the snapshot dirty flag is
+// set — never write on the event itself, or a boat sending a fix a second
+// would write the whole file a second.
 const touchSession = (session) => {
   session.lastActivity = Date.now();
+  markDirty();
 };
 
 // Helper: minimal shape validation for client-supplied coordinates
@@ -120,6 +191,7 @@ app.post('/api/sessions', (req, res) => {
     createdAt: Date.now(),
     lastActivity: Date.now()
   });
+  markDirty();
 
   res.json({ sessionId });
 });
@@ -315,23 +387,38 @@ io.on('connection', (socket) => {
   });
 });
 
-// Cleanup idle sessions. Expiry is based on last activity, NOT creation
-// time — the previous version deleted every session one hour after it was
-// created, so an overnight anchor watch silently lost its session and the
-// alarm could never fire again. A session anchored for days stays alive as
-// long as location updates keep coming in.
-const ONE_HOUR = 60 * 60 * 1000;
-const SESSION_IDLE_TTL = 24 * ONE_HOUR;
+// Cleanup idle sessions (see SESSION_IDLE_TTL above).
 setInterval(() => {
   const now = Date.now();
 
   for (const [sessionId, session] of sessions.entries()) {
     if (now - session.lastActivity > SESSION_IDLE_TTL) {
       sessions.delete(sessionId);
+      markDirty();
       console.log(`Cleaned up idle session: ${sessionId}`);
     }
   }
 }, ONE_HOUR);
+
+// Snapshot on a timer, not per event. Under a full night of 20 boats this
+// is one write every 30 s regardless of GPS rate.
+setInterval(() => writeSnapshot({ reason: 'timer' }), SNAPSHOT_INTERVAL_MS).unref();
+
+// Flush synchronously on the way out. `fly deploy` sends SIGTERM, so a
+// planned restart loses nothing at all.
+let shuttingDown = false;
+const shutdown = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received, flushing snapshot`);
+  writeSnapshot({ force: true, reason: signal });
+  server.close(() => process.exit(0));
+  // Don't let a lingering websocket hold the process open past the
+  // platform's grace period — the snapshot is already on disk.
+  setTimeout(() => process.exit(0), 3000).unref();
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -339,6 +426,7 @@ app.get('/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+restoreSnapshot();
 server.listen(PORT, () => {
-  console.log(`Anchor Alarm server running on port ${PORT}`);
+  console.log(`Anchor Alarm server running on port ${PORT} (data dir: ${DATA_DIR})`);
 });

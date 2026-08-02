@@ -303,7 +303,9 @@ export default function App() {
 
     const previousId = sessionRef.current?.sessionId;
     try {
-      const response = await fetch(`${BACKEND_URL}/api/sessions`, { method: 'POST' });
+      // ?recovery=1 is purely diagnostic: it lets a post-mortem tell a
+      // recovery mint apart from a tester creating a session by hand.
+      const response = await fetch(`${BACKEND_URL}/api/sessions?recovery=1`, { method: 'POST' });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
       if (!data?.sessionId) throw new Error('No session ID returned');

@@ -61,8 +61,26 @@ app.set('trust proxy', 1);
 app.use(cors({ origin: corsOrigin }));
 app.use(express.json({ limit: '16kb' }));
 
+// --- Logging --------------------------------------------------------------
+// Twenty testers will report "it stopped working last night" with no
+// reproduction, and `fly logs` is ephemeral. Every session-scoped line
+// carries the session and device ID so one boat's night can be
+// reconstructed with a single grep, and the per-connect chatter of 40
+// flapping sockets is kept at debug so it cannot bury the useful lines.
+const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+const DEBUG_ENABLED = LOG_LEVEL === 'debug';
+
+const tag = (sessionId, deviceId) =>
+  `[session ${sessionId || '-'}]${deviceId ? `[device ${deviceId}]` : ''}`;
+
+const debug = (...args) => {
+  if (DEBUG_ENABLED) console.log('[debug]', ...args);
+};
+
 // Store active sessions: { sessionId: { zone, locations, alarmed, anchor } }
 const sessions = new Map();
+
+const startedAt = Date.now();
 
 // Expiry is based on last activity, NOT creation time — an earlier version
 // deleted every session one hour after it was created, so an overnight
@@ -301,6 +319,11 @@ app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
   });
   markDirty();
 
+  // The client flags a recovery mint (the boat phone's session was lost to
+  // a restart) so the two are distinguishable in a post-mortem.
+  const recovered = req.query && req.query.recovery === '1';
+  console.log(`${tag(sessionId)} created${recovered ? ' (session recovery)' : ''}`);
+
   res.json({ sessionId });
 });
 
@@ -337,7 +360,7 @@ const withinJoinBudget = (socket) => {
 
 // Socket.io connections
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+  debug(`socket connected: ${socket.id}`);
 
   // Join a session
   socket.on('join-session', (data) => {
@@ -374,7 +397,7 @@ io.on('connection', (socket) => {
     session.deviceSockets[deviceId] = socket.id;
     touchSession(session);
 
-    console.log(`Client ${socket.id} joined session ${sessionId} as ${role} (device ${deviceId})`);
+    console.log(`${tag(sessionId, deviceId)} joined as ${role || 'unknown'} (socket ${socket.id})`);
 
     // Send current state to new client
     // The track ships with the join payload so a remote monitor opening at
@@ -497,6 +520,10 @@ io.on('connection', (socket) => {
 
     // If alarm state changed, notify
     if (shouldAlarm !== wasAlarmed) {
+      console.log(
+        `${tag(socket.sessionId, deviceId)} alarm ${shouldAlarm ? 'RAISED' : 'cleared'} ` +
+          `at ${location.latitude.toFixed(5)},${location.longitude.toFixed(5)}`
+      );
       io.to(socket.sessionId).emit('alarm-status-changed', {
         alarmed: shouldAlarm,
         triggeredAt: new Date().toISOString()
@@ -511,13 +538,14 @@ io.on('connection', (socket) => {
       session.alarmed = false;
       session.acknowledged = true;
       touchSession(session);
+      console.log(`${tag(socket.sessionId, socket.deviceId)} alarm acknowledged`);
       io.to(socket.sessionId).emit('alarm-acknowledged', { alarmed: false });
     }
   });
 
   // Disconnect
   socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+    debug(`socket disconnected: ${socket.id}`);
 
     if (!socket.sessionId) return;
 
@@ -544,7 +572,7 @@ io.on('connection', (socket) => {
 
   // Error handling
   socket.on('error', (error) => {
-    console.error(`Socket error for ${socket.id}:`, error);
+    console.error(`${tag(socket.sessionId, socket.deviceId)} socket error:`, error);
   });
 });
 
@@ -556,7 +584,7 @@ setInterval(() => {
     if (now - session.lastActivity > SESSION_IDLE_TTL) {
       sessions.delete(sessionId);
       markDirty();
-      console.log(`Cleaned up idle session: ${sessionId}`);
+      console.log(`${tag(sessionId)} expired (idle > ${SESSION_IDLE_TTL / ONE_HOUR} h)`);
     }
   }
 }, ONE_HOUR);
@@ -581,10 +609,37 @@ const shutdown = (signal) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Health check
+// Health check. Doubles as the beta's one-line status page — a single curl
+// answers "is it up, does it still have my session, and is it snapshotting".
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
+    sessions: sessions.size,
+    sockets: io.engine.clientsCount,
+    lastSnapshotAt: lastSnapshotAt ? new Date(lastSnapshotAt).toISOString() : null,
+    dataDir: DATA_DIR
+  });
 });
+
+// --- Crash handling -------------------------------------------------------
+// Never swallow and continue: a process that keeps serving alarms from
+// state it corrupted mid-throw is worse than one that restarts. Log the
+// stack, flush the snapshot so the restart resumes where this process left
+// off, then exit non-zero and let Fly bring it back.
+const crash = (kind, err) => {
+  console.error(`[fatal] ${kind}:`, err && err.stack ? err.stack : err);
+  try {
+    writeSnapshot({ force: true, reason: kind });
+  } catch (writeErr) {
+    console.error('[fatal] snapshot flush also failed:', writeErr.message);
+  }
+  process.exit(1);
+};
+
+process.on('uncaughtException', (err) => crash('uncaughtException', err));
+process.on('unhandledRejection', (reason) => crash('unhandledRejection', reason));
 
 const PORT = process.env.PORT || 5000;
 restoreSnapshot();

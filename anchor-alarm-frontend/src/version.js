@@ -4,4 +4,4 @@
 //
 // The build number beside it in Firebase is the versionCode, derived from
 // the git commit count, and moves on its own.
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';

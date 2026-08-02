@@ -274,7 +274,19 @@ which is the entire point of the app.
 
 ## Known limitations
 
-- Android only. No iOS project in this repo.
-- The Fly.io backend keeps sessions in memory: a restart drops every anchor
-  position and zone mid-test. Warn testers before it gets reported as a bug.
+- Android only. No iOS project in this repo. Confirm none of your testers are
+  on iPhone before promising them anything.
+- A backend restart is survivable but not invisible. Sessions are snapshotted
+  to the Fly volume every 30 s and on shutdown, so `fly deploy` keeps them.
+  If the server does lose a session anyway, the boat phone keeps its alarm
+  armed on local GPS and mints a new one automatically — **the session code
+  changes**, and the crew has to re-join with the new one. Tell testers that
+  a banner saying "Reconnected — new session code" is expected behaviour, not
+  a fault.
+- Up to 30 s of server-side track can be lost to a hard kill. The boat phone
+  holds the authoritative track and re-pushes it, so this costs remote
+  monitors detail, never the alarm.
 - The retired signing key remains in git history (see above).
+- **This is a test.** Tell testers plainly to keep their existing anchor
+  watch running alongside it. Until this beta has survived real nights,
+  nobody should be sleeping on this alarm alone.

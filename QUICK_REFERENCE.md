@@ -112,26 +112,26 @@ Root
 
 ## 🚨 Alarm System Flow
 
+The decision is **local, on the boat phone**. The server is a relay for
+remote monitors — losing it does not disable the alarm.
+
 ```
-GPS Update every 10s
+GPS fix on the boat phone
     ↓
-Send to backend
+decideAlarm() — LOCAL zone check, no network involved
+    ├─ INSIDE:  alarmed = false, acknowledgement cleared (re-armed)
+    ├─ OUTSIDE + acknowledged: silent until back inside
+    └─ OUTSIDE + not acknowledged:
+         ↓
+    Native notification (alarm.mp3, ongoing) + haptics, immediately
+    ↓  ... and, best-effort only, if the server is reachable:
+Send fix to backend
     ↓
-Backend: Check if inside zone
+Backend runs the same check, emits "alarm-status-changed"
     ↓
-Zone check result
-    ├─ INSIDE: alarmed = false
-    └─ OUTSIDE: alarmed = true
-         ↓
-    Emit "alarm-status-changed"
-         ↓
-    Frontend receives
-         ↓
-    Trigger sound + notification + vibration
-         ↓
-    User clicks "Acknowledge"
-         ↓
-    Reset alarm state
+Remote monitors are notified (they cannot see the GPS themselves)
+    ↓
+Either device: "Acknowledge" → silent until the boat re-enters the zone
 ```
 
 ---
@@ -154,17 +154,20 @@ Zone check result
 
 ## 🌐 Production Deploy (5 Minutes)
 
-### Backend → Render.com
-1. Go to render.com → Create account
-2. New → Web Service → Connect GitHub
-3. Select your repo
-4. Start Command: `npm start`
-5. Click Deploy
+### Backend → Fly.io
+Full instructions: `anchor-alarm-backend/DEPLOY_FLY.md`.
+```bash
+cd anchor-alarm-backend
+fly launch --copy-config --no-deploy
+fly volumes create anchor_data --region cdg --size 1   # once, same region
+fly deploy
+fly scale count 1        # ONE machine, always — never two
+```
 
 ### Frontend → Vercel.com
 1. Go to vercel.com → Create account
 2. Import GitHub repository
-3. Environment: `REACT_APP_BACKEND_URL` = your Render backend URL
+3. Environment: `REACT_APP_BACKEND_URL` = your Fly backend URL
 4. Click Deploy
 
 **You're live!** 🎉
@@ -207,9 +210,11 @@ npm run build           # Production build
 |--------|-------|
 | GPS Update Interval | 10 seconds |
 | Geofencing Algorithm | Ray-casting O(n) |
-| Session ID Length | 9 characters |
-| Session TTL | 1 hour |
-| Max Simultaneous Users | 1000+ |
+| Session ID Length | 9 characters (32-char alphabet, 32^9) |
+| Session TTL | 24 h of **inactivity** (not age — an overnight watch must survive) |
+| Session cap | 500, least-recently-active evicted first |
+| Session persistence | Snapshot to disk every 30 s + on SIGTERM |
+| Measured beta load | ~40 sockets, 2–4 messages/s on shared-cpu-1x / 256 MB |
 | Typical Data/Update | ~50 bytes |
 
 ---
@@ -217,7 +222,7 @@ npm run build           # Production build
 ## 🎯 Next Steps After Testing
 
 1. ✅ Test locally (you are here)
-2. 📱 Deploy to Render + Vercel (5 min)
+2. 📱 Deploy to Fly.io + Vercel (5 min)
 3. 📲 Test on Android phone (open in browser)
 4. 🔐 Add authentication (optional, future)
 5. 💾 Add database (optional, future)

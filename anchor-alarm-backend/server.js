@@ -3,20 +3,63 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const { readSnapshotSync, resolveDataDir, writeSnapshotSync } = require('./snapshot');
 
 const app = express();
 const server = http.createServer(app);
+
+// --- CORS -----------------------------------------------------------------
+// The webview origin depends on capacitor.config.ts: androidScheme 'http'
+// makes it http://localhost, and capacitor://localhost is what an
+// https/native scheme build would send. Both are listed, because getting
+// this wrong breaks every native client at once — VERIFY AGAINST A REAL APK
+// before shipping, and override with ALLOWED_ORIGINS (comma-separated)
+// rather than editing this list if a deployment moves.
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://alarm-anchor.vercel.app', // hosted frontend / QR join links
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+  'http://localhost:3000' // react-scripts dev server
+];
+
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+const ORIGINS = allowedOrigins.length ? allowedOrigins : DEFAULT_ALLOWED_ORIGINS;
+
+const corsOrigin = (origin, callback) => {
+  // No Origin header at all: same-origin requests, curl, the Fly
+  // healthcheck, and most native HTTP stacks. Refusing these would break
+  // the APK, so they are allowed — the tightening here is about browsers.
+  if (!origin) return callback(null, true);
+  if (ORIGINS.includes(origin)) return callback(null, true);
+  // Reject by omitting the header rather than throwing: the browser blocks
+  // the request and the server logs it, instead of returning a 500.
+  console.warn(`[cors] rejected origin ${origin}`);
+  return callback(null, false);
+};
+
 const io = socketIo(server, {
   cors: {
-    origin: '*',
+    origin: corsOrigin,
     methods: ['GET', 'POST']
-  }
+  },
+  // A full 3000-point track restore is ~120 KB; anything an order of
+  // magnitude past that is not a client of ours.
+  maxHttpBufferSize: 512 * 1024
 });
 
+// Behind the Fly proxy, so the real client IP is in X-Forwarded-For. One
+// hop — never `true`, which would let a client spoof its own IP and walk
+// straight through the rate limiter.
+app.set('trust proxy', 1);
+
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: corsOrigin }));
+app.use(express.json({ limit: '16kb' }));
 
 // Store active sessions: { sessionId: { zone, locations, alarmed, anchor } }
 const sessions = new Map();
@@ -158,8 +201,14 @@ const normalizeDeviceId = (value) => {
   return trimmed;
 };
 
+// A hand-drawn zone is a handful of vertices and the circle editor emits
+// 16; the cap only exists so a crafted payload cannot make every
+// point-in-polygon check on every GPS fix expensive.
+const MAX_ZONE_VERTICES = 256;
+
 const isValidZone = (zone) =>
   Array.isArray(zone) &&
+  zone.length <= MAX_ZONE_VERTICES &&
   zone.every(
     (p) => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
   );
@@ -187,8 +236,52 @@ const checkAlarm = (location, zone) => {
   return !isPointInPolygon(latLng, zone);
 };
 
+// --- Abuse limits ---------------------------------------------------------
+// Not a realistic threat among friends, but POST /api/sessions is
+// unauthenticated on a public URL and every tester's alarm now depends on
+// this 256 MB machine staying up. Cheap insurance.
+
+// Deliberately loose: testers behind one marina wifi or a CGNAT share an
+// IP, and a boat phone re-mints a session on every backend restart
+// (session recovery). Too tight here would break the honest case.
+const sessionCreateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.SESSION_RATE_LIMIT) || 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many sessions created from this address. Try again later.' }
+});
+
+const MAX_SESSIONS = Number(process.env.MAX_SESSIONS) || 500;
+
+// When the cap is reached, drop the session that has been idle longest
+// before refusing anyone. An abandoned session from this morning is worth
+// less than a boat trying to arm its alarm right now.
+const evictLeastRecentlyActive = () => {
+  let oldestId = null;
+  let oldestAt = Infinity;
+  for (const [sessionId, session] of sessions.entries()) {
+    if (session.lastActivity < oldestAt) {
+      oldestAt = session.lastActivity;
+      oldestId = sessionId;
+    }
+  }
+  if (oldestId) {
+    sessions.delete(oldestId);
+    markDirty();
+    console.log(`[session ${oldestId}] evicted (cap ${MAX_SESSIONS} reached)`);
+  }
+  return oldestId;
+};
+
 // REST API: Create new session
-app.post('/api/sessions', (req, res) => {
+app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
+  if (sessions.size >= MAX_SESSIONS) evictLeastRecentlyActive();
+  if (sessions.size >= MAX_SESSIONS) {
+    console.error(`[sessions] at capacity (${MAX_SESSIONS}), refusing to create`);
+    return res.status(503).json({ error: 'Server at capacity. Try again shortly.' });
+  }
+
   const sessionId = generateSessionId();
   sessions.set(sessionId, {
     zone: [],
@@ -229,12 +322,34 @@ app.get('/api/sessions/:sessionId', (req, res) => {
   });
 });
 
+// Per-socket join budget — see the join-session handler.
+const JOIN_ATTEMPT_LIMIT = 20;
+const JOIN_ATTEMPT_WINDOW_MS = 60 * 1000;
+
+const withinJoinBudget = (socket) => {
+  const now = Date.now();
+  if (!socket.joinBudget || now - socket.joinBudget.windowStart > JOIN_ATTEMPT_WINDOW_MS) {
+    socket.joinBudget = { windowStart: now, count: 0 };
+  }
+  socket.joinBudget.count += 1;
+  return socket.joinBudget.count <= JOIN_ATTEMPT_LIMIT;
+};
+
 // Socket.io connections
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   // Join a session
   socket.on('join-session', (data) => {
+    // Throttle guessing attempts. The 32^9 keyspace makes brute force
+    // impractical anyway, but an unbounded join loop is free CPU denial.
+    // Counted per socket, and an honest client joins once per socket, so
+    // this never touches a boat phone reconnecting all night.
+    if (!withinJoinBudget(socket)) {
+      socket.emit('error', 'Too many join attempts');
+      return;
+    }
+
     const { sessionId, role } = data || {}; // role: 'main' or 'remote'
     const session = sessions.get(sessionId);
 

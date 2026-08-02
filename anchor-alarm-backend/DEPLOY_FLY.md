@@ -65,6 +65,29 @@ Puis recompiler l'APK. Le backend étant désormais en HTTPS, le trafic en
 clair (`usesCleartextTraffic` / `androidScheme: http`) n'est plus
 nécessaire que pour le développement local.
 
+## Origines autorisées (CORS)
+
+Le serveur n'accepte plus n'importe quelle origine. La liste par défaut
+couvre le frontend Vercel, `capacitor://localhost`, `http://localhost` (le
+schéma utilisé par le webview Android) et le serveur de développement.
+Pour la changer sans toucher au code :
+
+```bash
+fly secrets set ALLOWED_ORIGINS="https://mon-front.vercel.app,capacitor://localhost,http://localhost"
+```
+
+> ⚠️ **À vérifier sur un vrai APK avant distribution.** Une origine
+> manquante casse tous les clients natifs d'un coup. Les requêtes sans
+> en-tête `Origin` (healthcheck, `curl`, piles HTTP natives) restent
+> acceptées ; c'est le navigateur que l'on restreint ici. Un refus est
+> tracé dans `fly logs` (`[cors] rejected origin …`).
+
+Autres variables facultatives : `SESSION_RATE_LIMIT` (créations de session
+par IP et par heure, 30 par défaut — volontairement large, les testeurs
+d'un même ponton partagent une IP) et `MAX_SESSIONS` (500 par défaut ;
+au-delà, la session inactive depuis le plus longtemps est évincée avant
+tout refus en 503).
+
 ## Exploitation
 
 ```bash

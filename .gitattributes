@@ -1,2 +1,15 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Anything executed by a shell — inside a Linux container or by Git Bash —
+# must keep LF endings even when checked out on Windows. Without this,
+# core.autocrlf rewrites them to CRLF in the working tree, the Docker build
+# copies that in, and the container dies at exec with the shebang read as
+# "/bin/sh\r": "no such file or directory".
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.toml text eol=lf
+
+# Gradle wrappers: the shell one must stay LF, the Windows one CRLF.
+gradlew text eol=lf
+gradlew.bat text eol=crlf

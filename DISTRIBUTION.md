@@ -169,7 +169,20 @@ script, so the App ID stays out of the repository.
 ```bash
 cd anchor-alarm-frontend
 git status --short             # commit first — see versionCode below
+npm test                       # must pass before shipping — see below
 npm run ship:android           # prepare + assembleRelease + upload to crew
+```
+
+`npm test` runs once and exits (`test:watch` is the interactive mode). It
+covers the local zone check in `utils/alarm.js` — the property that keeps the
+alarm armed with no server — and the rule that a lost session makes the boat
+phone recover rather than stop tracking. A red suite there means the alarm
+itself may be broken, so never ship past it.
+
+The backend has its own suite for the session snapshot round-trip:
+
+```bash
+cd ../anchor-alarm-backend && npm test
 ```
 
 Or in two steps:
@@ -193,6 +206,8 @@ APK lands at `android/app/build/outputs/apk/release/app-release.apk`.
 ### Checklist
 
 - [ ] `JAVA_HOME` is Java 21 (`java -version`)
+- [ ] `npm test` passes in **both** `anchor-alarm-frontend` and
+      `anchor-alarm-backend`
 - [ ] Work is **committed** — `versionCode` derives from the commit count
 - [ ] `npm run release:android` — never `gradlew assembleRelease` alone, or the
       APK ships the previous web assets and still builds fine

@@ -118,6 +118,9 @@ export const strings = {
     fgsTitle: 'Anchor alarm active',
     fgsMessage: 'Tracking the boat position',
 
+    // Session recovery (the server lost the session; the alarm never stopped)
+    recoveredNotice: 'Reconnected — new session code {id}. Re-share it with your crew.',
+
     // Errors
     errConnecting: 'Connecting to server, please wait…',
     errCreateSession: 'Failed to create session: {msg}',
@@ -233,6 +236,8 @@ export const strings = {
     unknownLocation: 'Position inconnue',
     fgsTitle: 'Alarme de mouillage active',
     fgsMessage: 'Surveillance de la position du bateau',
+
+    recoveredNotice: 'Reconnecté — nouveau code de session {id}. Repartagez-le avec votre équipage.',
 
     errConnecting: 'Connexion au serveur, patientez…',
     errCreateSession: 'Échec de création de session : {msg}',

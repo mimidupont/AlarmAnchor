@@ -210,6 +210,33 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Bulk-restore a track into a fresh session. Used by the boat phone's
+  // session recovery: when the server has lost the session (a restart),
+  // the phone mints a new one and re-pushes the night it recorded locally,
+  // which is authoritative. Only ever accepted into an empty track, so a
+  // stray client cannot overwrite a session's real history.
+  socket.on('restore-track', (data) => {
+    const session = sessions.get(socket.sessionId);
+    if (!session || session.track.length > 0) return;
+    if (!data || !Array.isArray(data.track)) return;
+
+    const points = data.track
+      .filter(
+        (p) =>
+          Array.isArray(p) &&
+          p.length === 3 &&
+          Number.isFinite(p[0]) &&
+          Number.isFinite(p[1]) &&
+          Number.isFinite(p[2])
+      )
+      .slice(-TRACK_MAX_POINTS);
+
+    if (points.length === 0) return;
+
+    session.track = points;
+    touchSession(session);
+  });
+
   // Update location (from main app)
   socket.on('update-location', (data) => {
     const { location } = data;

@@ -380,6 +380,26 @@ export default function App() {
       setConnected(false);
     });
 
+    // A connection that never establishes in the first place: a browser
+    // blocked by CORS, a wrong backend URL, or a backend that is down.
+    // This used to be handled nowhere, so a remote watcher opening the
+    // hosted site sat on the session picker forever with no explanation
+    // while the same join from the APK worked — the native client sends no
+    // Origin header, so it is never the one CORS rejects.
+    newSocket.on('connect_error', (err) => {
+      const msg = (err && err.message) || 'connection failed';
+      console.error('❌ Socket connect error:', msg);
+      setConnected(false);
+
+      // The boat phone keeps alarming from its own GPS whether or not the
+      // server is reachable, and the status pill already says "offline" —
+      // a red banner there would be noise it cannot act on. A remote
+      // monitor has nothing at all without the server, so it must say so.
+      if (sessionRef.current?.role !== 'main') {
+        setError(tRef.current('errUnreachable', { msg }));
+      }
+    });
+
     newSocket.on('error', (errorMsg) => {
       console.error('❌ Socket error:', errorMsg);
       const action = sessionErrorAction(sessionRef.current?.role, errorMsg);

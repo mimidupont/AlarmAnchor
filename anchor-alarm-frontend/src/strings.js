@@ -125,6 +125,7 @@ export const strings = {
     errConnecting: 'Connecting to server, please wait…',
     errCreateSession: 'Failed to create session: {msg}',
     errConnection: 'Connection error: {msg}',
+    errUnreachable: "Can't reach the server ({msg}). Check your connection and try again.",
     errLocPermission: 'Location permission was not granted',
     errDropAnchor: 'Could not set the anchor position: {msg}',
   },
@@ -242,6 +243,7 @@ export const strings = {
     errConnecting: 'Connexion au serveur, patientez…',
     errCreateSession: 'Échec de création de session : {msg}',
     errConnection: 'Erreur de connexion : {msg}',
+    errUnreachable: 'Serveur injoignable ({msg}). Vérifiez votre connexion et réessayez.',
     errLocPermission: 'Permission de localisation refusée',
     errDropAnchor: "Impossible de définir la position de l'ancre : {msg}",
   }

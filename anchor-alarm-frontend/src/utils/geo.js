@@ -29,16 +29,47 @@ export function bearingToCompass(deg) {
   return dirs[Math.round(deg / 45) % 8];
 }
 
+// Signed longitude difference, wrapped into [-180, 180].
+//
+// Everything geometric in this file works over an anchor zone — tens of
+// metres — so two longitudes being more than 180 degrees apart can only
+// mean the 180th meridian is sitting between them, not that the points are
+// genuinely half a world apart. Wrapping the difference is what lets a zone
+// straddle the meridian: raw subtraction reads such a zone as spanning
+// 359.998 degrees instead of 0.002, which inverts every verdict below.
+export function lngDeltaDegrees(lng, refLng) {
+  let d = (lng - refLng) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
+// Bring a longitude back into [-180, 180) after arithmetic has pushed it
+// past the meridian.
+export function normalizeLng(lng) {
+  return ((((lng + 180) % 360) + 360) % 360) - 180;
+}
+
 // Ray-casting point-in-polygon test. `point` is [lat, lng]; `polygon` is an
 // array of [lat, lng] vertices. Same algorithm as the server uses, so the
 // boat phone reaches the same verdict offline as the server does online.
+//
+// Longitudes are unwrapped onto a continuous line around the polygon's first
+// vertex before casting the ray, so a zone crossing the antimeridian is
+// tested as the small shape it is.
 export function isPointInPolygon(point, polygon) {
-  const [x, y] = point;
+  if (!polygon || polygon.length < 3) return false;
+
+  const [x, rawY] = point;
+  const refLng = polygon[0][1];
+  const y = refLng + lngDeltaDegrees(rawY, refLng);
   let inside = false;
 
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
+    const xi = polygon[i][0];
+    const yi = refLng + lngDeltaDegrees(polygon[i][1], refLng);
+    const xj = polygon[j][0];
+    const yj = refLng + lngDeltaDegrees(polygon[j][1], refLng);
 
     const intersect =
       ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
@@ -66,7 +97,7 @@ export function zoneRadiusMeters(anchor, zone) {
 // enough at anchoring distances (tens of meters).
 export function destinationEast(lat, lon, meters) {
   const metersPerDegLon = 111320 * Math.cos((lat * Math.PI) / 180);
-  return [lat, lon + meters / metersPerDegLon];
+  return [lat, normalizeLng(lon + meters / metersPerDegLon)];
 }
 
 // Builds an approximate circular polygon (array of [lat, lng] points) of
@@ -83,7 +114,9 @@ export function circlePolygonPoints(lat, lon, radiusMeters, steps = 16) {
     const dLon =
       (radiusMeters * Math.sin(angle)) /
       (metersPerDegLat * Math.cos((lat * Math.PI) / 180));
-    points.push([lat + dLat, lon + dLon]);
+    // Normalised, so a zone dropped within a few metres of the 180th
+    // meridian is stored as valid coordinates rather than lng 180.0004.
+    points.push([lat + dLat, normalizeLng(lon + dLon)]);
   }
   return points;
 }
@@ -92,7 +125,7 @@ export function circlePolygonPoints(lat, lon, radiusMeters, steps = 16) {
 // involved in correcting an anchor position, plain delta addition is
 // indistinguishable from a proper geodesic translation.
 export function translatePolygon(points, dLat, dLng) {
-  return points.map(([lat, lng]) => [lat + dLat, lng + dLng]);
+  return points.map(([lat, lng]) => [lat + dLat, normalizeLng(lng + dLng)]);
 }
 
 // Local ENU-ish projection: meters east/north of a reference point.
@@ -100,7 +133,9 @@ export function translatePolygon(points, dLat, dLng) {
 function toLocalMeters(lat, lng, refLat, refLng) {
   const mPerDegLat = 111320;
   const mPerDegLng = 111320 * Math.cos((refLat * Math.PI) / 180);
-  return [(lng - refLng) * mPerDegLng, (lat - refLat) * mPerDegLat];
+  // Wrapped, so a zone edge on the far side of the 180th meridian measures
+  // as the few metres it is rather than most of the way round the globe.
+  return [lngDeltaDegrees(lng, refLng) * mPerDegLng, (lat - refLat) * mPerDegLat];
 }
 
 // Shortest distance from point p to segment a-b, all in local meters.
@@ -155,8 +190,13 @@ export function nearestZonePoint(lat, lng, zone) {
     if (distance < min) {
       min = distance;
       // Interpolate in lat/lng directly: the projection is linear in both
-      // coordinates, so the parameter t carries over unchanged.
-      best = [latA + t * (latB - latA), lngA + t * (lngB - lngA)];
+      // coordinates, so the parameter t carries over unchanged. Longitude
+      // is stepped by the wrapped delta, or an edge spanning the meridian
+      // would interpolate the long way round.
+      best = [
+        latA + t * (latB - latA),
+        normalizeLng(lngA + t * lngDeltaDegrees(lngB, lngA))
+      ];
     }
   }
   return best;

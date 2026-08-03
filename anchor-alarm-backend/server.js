@@ -18,6 +18,14 @@ const server = http.createServer(app);
 // rather than editing this list if a deployment moves.
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://alarm-anchor.vercel.app', // hosted frontend / QR join links
+  // Vercel gives every deployment its own hostname
+  // (alarm-anchor-<hash>-<scope>.vercel.app) and only aliases the newest to
+  // the bare name above. A tester who opens a preview link, or the site
+  // before the alias moves, arrives from one of those and used to be
+  // rejected — which presents exactly as "the remote monitor works in the
+  // app but not in a browser", because the native client sends no Origin
+  // header and so was never subject to this check at all.
+  'https://alarm-anchor-*.vercel.app',
   'capacitor://localhost',
   'ionic://localhost',
   'http://localhost',
@@ -30,15 +38,31 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .filter(Boolean);
 const ORIGINS = allowedOrigins.length ? allowedOrigins : DEFAULT_ALLOWED_ORIGINS;
 
+// Exact match, or a '*' standing in for exactly one hostname label. Kept
+// deliberately narrow — '*' never crosses a dot or a slash, so
+// 'https://alarm-anchor-*.vercel.app' cannot be stretched to match another
+// project's deployment or a path on some other host.
+const originMatches = (pattern, origin) => {
+  if (pattern === origin) return true;
+  if (!pattern.includes('*')) return false;
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^./]*');
+  return new RegExp(`^${escaped}$`).test(origin);
+};
+
 const corsOrigin = (origin, callback) => {
   // No Origin header at all: same-origin requests, curl, the Fly
   // healthcheck, and most native HTTP stacks. Refusing these would break
   // the APK, so they are allowed — the tightening here is about browsers.
   if (!origin) return callback(null, true);
-  if (ORIGINS.includes(origin)) return callback(null, true);
+  if (ORIGINS.some((pattern) => originMatches(pattern, origin))) return callback(null, true);
   // Reject by omitting the header rather than throwing: the browser blocks
-  // the request and the server logs it, instead of returning a 500.
-  console.warn(`[cors] rejected origin ${origin}`);
+  // the request and the server logs it, instead of returning a 500. Say
+  // what the consequence is — a silent CORS rejection is otherwise
+  // indistinguishable from the backend being down.
+  console.warn(
+    `[cors] rejected origin ${origin} — a browser loading the app from there cannot ` +
+      `connect. Add it to ALLOWED_ORIGINS (comma-separated) if it is yours.`
+  );
   return callback(null, false);
 };
 
@@ -231,14 +255,35 @@ const isValidZone = (zone) =>
     (p) => Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
   );
 
-// Helper: Check if point is inside polygon using ray casting algorithm
+// Signed longitude difference wrapped into [-180, 180]. An anchor zone spans
+// tens of metres, so two longitudes more than 180 degrees apart can only mean
+// the 180th meridian lies between them. Must stay identical to
+// lngDeltaDegrees in the client's utils/geo.js, or the boat phone and the
+// server reach different verdicts about the same fix.
+const lngDeltaDegrees = (lng, refLng) => {
+  let d = (lng - refLng) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+};
+
+// Helper: Check if point is inside polygon using ray casting algorithm.
+// Longitudes are unwrapped around the polygon's first vertex first, so a
+// zone straddling the antimeridian is tested as the small shape it is
+// instead of one spanning 359.998 degrees (which inverts the verdict).
 const isPointInPolygon = (point, polygon) => {
-  const [x, y] = point;
+  if (!polygon || polygon.length < 3) return false;
+
+  const [x, rawY] = point;
+  const refLng = polygon[0][1];
+  const y = refLng + lngDeltaDegrees(rawY, refLng);
   let inside = false;
 
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
+    const xi = polygon[i][0];
+    const yi = refLng + lngDeltaDegrees(polygon[i][1], refLng);
+    const xj = polygon[j][0];
+    const yj = refLng + lngDeltaDegrees(polygon[j][1], refLng);
 
     const intersect = ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
     if (intersect) inside = !inside;
@@ -417,7 +462,12 @@ io.on('connection', (socket) => {
 
   // Update zone (from main app)
   socket.on('update-zone', (data) => {
-    const { zone } = data;
+    // `data || {}`, not `data`: an event emitted with no argument (or an
+    // explicit null) would otherwise throw here, and nothing catches a
+    // socket handler — it reaches the uncaughtException handler below,
+    // which exits the process. One malformed client would take the relay
+    // down for every boat on the machine.
+    const { zone } = data || {};
     const session = sessions.get(socket.sessionId);
 
     if (session && isValidZone(zone)) {
@@ -430,7 +480,7 @@ io.on('connection', (socket) => {
   // Update anchor position (from main app). anchor is either
   // { latitude, longitude, accuracy, timestamp } or null to clear it.
   socket.on('update-anchor', (data) => {
-    const { anchor, resetTrack } = data;
+    const { anchor, resetTrack } = data || {};
     const session = sessions.get(socket.sessionId);
 
     if (session && (anchor === null || isValidLocation(anchor))) {
@@ -476,7 +526,7 @@ io.on('connection', (socket) => {
 
   // Update location (from main app)
   socket.on('update-location', (data) => {
-    const { location } = data;
+    const { location } = data || {};
     const session = sessions.get(socket.sessionId);
 
     if (!session || !isValidLocation(location)) return;

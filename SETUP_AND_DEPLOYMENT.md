@@ -205,8 +205,21 @@ After changing the backend origin, add the new frontend origin to the
 backend's CORS allowlist — otherwise the browser build is blocked:
 
 ```bash
-fly secrets set ALLOWED_ORIGINS="https://<your-frontend>.vercel.app,capacitor://localhost,http://localhost"
+fly secrets set ALLOWED_ORIGINS="https://<your-frontend>.vercel.app,https://<your-frontend>-*.vercel.app,capacitor://localhost,http://localhost"
 ```
+
+> ⚠️ **Setting `ALLOWED_ORIGINS` replaces the built-in list, it does not add
+> to it.** Anything you leave out is blocked. Include the `-*` preview
+> pattern above: Vercel gives every deployment its own hostname
+> (`<project>-<hash>-<scope>.vercel.app`) and only aliases the newest one to
+> the bare name, so a tester who opens a preview link is on an origin the
+> bare name does not cover.
+>
+> This failure is easy to misread. The APK keeps working — native HTTP
+> stacks send no `Origin` header, so they are never subject to the check —
+> while a browser opening the same session shows the picker and never
+> reaches the map. If a remote monitor works in the app but not in a
+> browser, check `fly logs` for `[cors] rejected origin …` first.
 
 ### Option 2: Self-Hosted (AWS/DigitalOcean)
 

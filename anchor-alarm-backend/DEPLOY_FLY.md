@@ -73,8 +73,20 @@ schéma utilisé par le webview Android) et le serveur de développement.
 Pour la changer sans toucher au code :
 
 ```bash
-fly secrets set ALLOWED_ORIGINS="https://mon-front.vercel.app,capacitor://localhost,http://localhost"
+fly secrets set ALLOWED_ORIGINS="https://mon-front.vercel.app,https://mon-front-*.vercel.app,capacitor://localhost,http://localhost"
 ```
+
+> ⚠️ **`ALLOWED_ORIGINS` remplace la liste par défaut, il ne s'y ajoute
+> pas.** Tout ce qui n'y figure pas est bloqué. Pensez au motif `-*` :
+> Vercel donne un nom d'hôte propre à chaque déploiement
+> (`<projet>-<hash>-<compte>.vercel.app`) et n'associe le nom court qu'au
+> plus récent, donc un testeur qui ouvre un lien de prévisualisation arrive
+> sur une origine que le nom court ne couvre pas. Une entrée peut contenir
+> `*`, qui remplace exactement une étiquette de nom d'hôte.
+>
+> Le symptôme trompe : l'APK continue de fonctionner (les piles HTTP
+> natives n'envoient pas d'en-tête `Origin`), alors qu'un navigateur reste
+> bloqué sur l'écran de session sans jamais afficher la carte.
 
 > ⚠️ **À vérifier sur un vrai APK avant distribution.** Une origine
 > manquante casse tous les clients natifs d'un coup. Les requêtes sans

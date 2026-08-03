@@ -132,4 +132,28 @@ describe('ALLOWED_ORIGINS override', () => {
     // And the app is still reachable with no Origin.
     assert.equal((await health(server.base)).status, 'ok');
   });
+
+  it('reports the effective allowlist so a mangled secret is visible', async (t) => {
+    // `fly secrets list` shows names and digests only. Without this, a shell
+    // that rewrote the value (Git Bash turns capacitor://localhost into a
+    // Windows path) fails silently, in browsers only.
+    const server = await boot({
+      ALLOWED_ORIGINS: 'https://anchor.example.com,capacitor://localhost'
+    });
+
+    const h = await health(server.base);
+    assert.deepEqual(h.allowedOrigins, ['https://anchor.example.com', 'capacitor://localhost']);
+    assert.equal(h.allowedOriginsSource, 'ALLOWED_ORIGINS');
+    assert.match(server.output, /\[cors\] allowing 2 origin\(s\) from ALLOWED_ORIGINS/);
+    t.diagnostic(`/health reports: ${h.allowedOrigins.join(', ')}`);
+  });
+
+  it('says so when it is running on the built-in default list', async () => {
+    const server = await boot();
+    const h = await health(server.base);
+    assert.equal(h.allowedOriginsSource, 'default');
+    assert.ok(h.allowedOrigins.includes('https://alarm-anchor.vercel.app'));
+    assert.ok(h.allowedOrigins.includes('https://alarm-anchor-*.vercel.app'));
+    assert.match(server.output, /\[cors\] allowing \d+ origin\(s\) from the built-in default/);
+  });
 });

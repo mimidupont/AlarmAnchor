@@ -669,7 +669,14 @@ app.get('/health', (req, res) => {
     sessions: sessions.size,
     sockets: io.engine.clientsCount,
     lastSnapshotAt: lastSnapshotAt ? new Date(lastSnapshotAt).toISOString() : null,
-    dataDir: DATA_DIR
+    dataDir: DATA_DIR,
+    // The effective browser allowlist. `fly secrets list` shows only names
+    // and digests, so this is the only way to confirm from outside that
+    // ALLOWED_ORIGINS arrived intact — a shell that mangled it (Git Bash
+    // rewrites `capacitor://localhost` into a Windows path) otherwise fails
+    // silently, and only in browsers.
+    allowedOrigins: ORIGINS,
+    allowedOriginsSource: allowedOrigins.length ? 'ALLOWED_ORIGINS' : 'default'
   });
 });
 
@@ -695,4 +702,10 @@ const PORT = process.env.PORT || 5000;
 restoreSnapshot();
 server.listen(PORT, () => {
   console.log(`Anchor Alarm server running on port ${PORT} (data dir: ${DATA_DIR})`);
+  // Printed every boot so `fly logs` answers "did my ALLOWED_ORIGINS
+  // actually apply, and is the browser origin in it?" without guesswork.
+  console.log(
+    `[cors] allowing ${ORIGINS.length} origin(s) from ` +
+      `${allowedOrigins.length ? 'ALLOWED_ORIGINS' : 'the built-in default'}: ${ORIGINS.join(', ')}`
+  );
 });

@@ -1,189 +1,82 @@
 /**
- * service-worker.js
- * Handles background notifications for boat alarm system
- * 
- * Deploy to: public/service-worker.js
- * 
- * Features:
- * - Background notification display
- * - Persistent alarm even when app closed
- * - Offline support with cache-first strategy
- * - User action handling (notification clicks)
+ * service-worker.js — a tombstone that removes itself.
+ *
+ * This file used to be a cache-first service worker: it precached '/' and
+ * '/index.html' under a hardcoded CACHE_NAME of 'anchor-alarm-v1', and
+ * served navigations from that cache before going to the network.
+ *
+ * Two properties combined into a site that goes blank after every deploy:
+ *
+ *   - the cached index.html references a content-hashed bundle
+ *     (/static/js/main.<hash>.js), and a new build deletes the old hash, so
+ *     the cached page loads a script that 404s and renders nothing at all;
+ *   - CACHE_NAME never changed, and the activate handler only deleted
+ *     caches whose name *differed* from it, so the poisoned entry was never
+ *     evicted. The failure was permanent and per-device — an incognito
+ *     window (no worker registered) always worked, which is what makes this
+ *     so confusing to diagnose.
+ *
+ * Nothing in the app registers a service worker any more: notifications go
+ * through Capacitor LocalNotifications, and no source file references
+ * navigator.serviceWorker at all. But a registration made by an older build
+ * lives forever until something replaces it, which is what this file is.
+ *
+ * It must keep being served at this exact path. Deleting it would leave
+ * every already-registered device stuck: browsers do not reliably drop a
+ * registration when its script 404s, and a device that never fetches a
+ * replacement never recovers.
+ *
+ * Deliberately has NO fetch handler. Without one the browser goes straight
+ * to the network, so even before this finishes its cleanup it is already
+ * incapable of serving a stale page.
  */
 
-const CACHE_NAME = 'anchor-alarm-v1';
-const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/favicon.ico'
-];
+// Replace the old worker immediately instead of waiting for every tab to
+// close — the tabs in question are showing a blank screen and will not be
+// closed in any hurry.
+self.addEventListener('install', () => self.skipWaiting());
 
-// Install: Cache essential assets
-self.addEventListener('install', (event) => {
-  console.log('Service Worker: Installing...');
-  
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Service Worker: Caching assets');
-        return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
-          console.warn('Service Worker: Some assets failed to cache', err);
-          // Continue even if some assets fail
-        });
-      })
-      .then(() => self.skipWaiting()) // Activate immediately
-  );
-});
-
-// Activate: Clean up old caches
 self.addEventListener('activate', (event) => {
-  console.log('Service Worker: Activating...');
-  
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => {
-            console.log('Service Worker: Deleting old cache', name);
-            return caches.delete(name);
-          })
-      );
-    }).then(() => self.clients.claim()) // Take control immediately
-  );
-});
-
-// Message from app: Trigger notification
-self.addEventListener('message', (event) => {
-  if (event.data.type !== 'TRIGGER_ALARM') return;
-
-  const { title, body, boatData } = event.data;
-
-  console.log('Service Worker: Received alarm message', { title, body });
-
-  // Show persistent notification
-  self.registration.showNotification(title, {
-    body: body,
-    icon: '/alarm-icon-192.png',
-    badge: '/alarm-badge-72.png',
-    requireInteraction: true, // Forces user to dismiss
-    tag: 'anchor-alarm', // Replace previous notifications
-    sound: '/alarm-sound.mp3', // Optional: add sound if available
-    actions: [
-      {
-        action: 'open-app',
-        title: 'Open App',
-        icon: '/check-icon.png'
-      },
-      {
-        action: 'dismiss',
-        title: 'Dismiss',
-        icon: '/dismiss-icon.png'
-      }
-    ],
-    data: {
-      boatData: boatData,
-      timestamp: new Date().toISOString()
-    }
-  }).catch((err) => {
-    console.error('Service Worker: Failed to show notification', err);
-  });
-});
-
-// Handle notification clicks
-self.addEventListener('notificationclick', (event) => {
-  console.log('Service Worker: Notification clicked', event.action);
-
-  event.notification.close();
-
-  if (event.action === 'dismiss') {
-    return;
-  }
-
-  // 'open-app' action or click on notification body
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // Look for existing app window
-      for (let i = 0; i < clientList.length; i++) {
-        const client = clientList[i];
-        if (client.url === '/' && 'focus' in client) {
-          console.log('Service Worker: Focusing existing window');
-          return client.focus();
-        }
+    (async () => {
+      // Take over from the old worker straight away rather than waiting for
+      // every tab to close.
+      try {
+        await self.clients.claim();
+      } catch (err) {
+        // Not fatal — the cache purge below is what actually matters.
       }
 
-      // Open new window if none exists
-      if (clients.openWindow) {
-        console.log('Service Worker: Opening new window');
-        return clients.openWindow('/');
+      // Drop every cache this origin ever created, not just the one name we
+      // happen to know about. Assuming a single known name is precisely
+      // what made the original bug permanent.
+      try {
+        const names = await caches.keys();
+        await Promise.all(names.map((name) => caches.delete(name)));
+      } catch (err) {
+        // Storage unavailable; unregistering still stops the interception.
       }
-    })
+
+      // Deliberately does NOT reload open pages.
+      //
+      // Calling client.navigate() here is tempting — the page on screen is
+      // blank, and reloading it would spare the user a refresh. It was
+      // tried and removed: it could not be verified reliably, it destroys
+      // the tab under automation, and if anything ever re-registered this
+      // worker it would loop (load -> register -> activate -> navigate ->
+      // load). Purging the cache and unregistering is what actually fixes
+      // the device; a refresh, which someone staring at a blank page will
+      // do anyway, is a fair price for a cleanup path that cannot itself
+      // break the site.
+
+      // Finally remove the registration, so this origin has no service
+      // worker at all from here on.
+      try {
+        await self.registration.unregister();
+      } catch (err) {
+        // Nothing left to do; there is no fetch handler, so the worker is
+        // already inert even if the registration lingers.
+      }
+    })()
   );
 });
-
-// Handle notification close
-self.addEventListener('notificationclose', (event) => {
-  console.log('Service Worker: Notification closed', event.notification.tag);
-  // You can log this for analytics if needed
-});
-
-// Fetch: Cache-first strategy for offline support
-self.addEventListener('fetch', (event) => {
-  // Only cache GET requests
-  if (event.request.method !== 'GET') {
-    return;
-  }
-
-  // Don't cache Socket.io or other dynamic requests
-  const url = new URL(event.request.url);
-  if (url.pathname.includes('socket.io') || url.pathname.includes('/api/')) {
-    return;
-  }
-
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // Return cached version if available
-        if (response) {
-          console.log('Service Worker: Serving from cache', event.request.url);
-          return response;
-        }
-
-        // Otherwise, fetch from network
-        return fetch(event.request)
-          .then((response) => {
-            // Don't cache non-successful responses
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-
-            // Cache successful responses
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-
-            return response;
-          })
-          .catch((err) => {
-            console.warn('Service Worker: Fetch failed', event.request.url, err);
-            // Return cached version or offline page
-            return caches.match(event.request)
-              .then((cachedResponse) => cachedResponse || new Response('Offline'));
-          });
-      })
-  );
-});
-
-// Background sync (advanced feature)
-// Register periodic notification check (requires permission)
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'alarm-check') {
-    event.waitUntil(
-      // Perform background sync here if needed
-      Promise.resolve()
-    );
-  }
-});
-
-console.log('Service Worker: Loaded and ready');

@@ -46,6 +46,18 @@ const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
+// Printed once at startup so "which backend is this build actually talking
+// to?" is answerable from the browser console, without DevTools archaeology
+// through the socket.io requests.
+//
+// This is not hypothetical: REACT_APP_BACKEND_URL is baked in at build time,
+// and a Vercel project-level environment variable silently overrides the
+// .env.production checked into the repo. When the two disagree the symptom is
+// a session that plainly exists — GET /api/sessions/<id> returns it — yet
+// every socket join is answered "Session not found", because the page is
+// asking a different server entirely.
+console.log(`⚓ Anchor Alarm — backend: ${BACKEND_URL}`);
+
 const THEMES = ['day', 'night', 'red'];
 
 // localStorage persistence is web-only (nice-to-have); the Capacitor
@@ -367,7 +379,7 @@ export default function App() {
     });
 
     newSocket.on('connect', () => {
-      console.log('✅ Connected to server');
+      console.log('✅ Connected to server', BACKEND_URL);
       setConnected(true);
       setError(null);
       // Re-join the session after a reconnection, otherwise the server

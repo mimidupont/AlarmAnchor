@@ -28,6 +28,7 @@ import {
   sessionErrorAction
 } from './utils/alarm';
 import { ensureDeviceId, initDeviceId } from './utils/deviceId';
+import { urlWithoutJoinParam } from './utils/joinLink';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -379,6 +380,18 @@ export default function App() {
         // picker if the code is stale.
         const joinId = joinParamRef.current.toUpperCase();
         joinParamRef.current = null;
+        // Consume it from the address bar too, not just from the ref.
+        // Otherwise the link is only one-shot within this page load: on the
+        // next reload the same stale code is auto-joined again, failing with
+        // "Session not found" every time, and the pre-filled join box offers
+        // the dead code back to the user.
+        try {
+          const cleaned = urlWithoutJoinParam(window.location.href);
+          if (cleaned) window.history.replaceState({}, '', cleaned);
+        } catch (err) {
+          // History unavailable — the join below still works, the link just
+          // stays in the bar.
+        }
         sessionRef.current = { sessionId: joinId, role: 'remote' };
         setSessionId(joinId);
         emitJoin(newSocket, sessionRef.current);

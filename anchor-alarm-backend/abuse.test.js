@@ -436,6 +436,28 @@ describe('joining a nonexistent session', () => {
     // And no state-update leaks through alongside the error.
     assert.equal(await waitFor(socket, 'state-update', 500), null);
 
+    // The rejection must reach the log, naming the code that was tried —
+    // without it, "I get Session not found" is undiagnosable from fly logs.
+    await delay(200);
+    assert.match(server.output, /\[session NOSUCHSES\] join rejected as remote/);
+
+    socket.close();
+    await assertStillUp(server, 0);
+  });
+
+  it('truncates an absurd session id instead of flooding the log', async () => {
+    const server = await boot();
+    const socket = await connect(server.base);
+
+    await new Promise((resolve) => {
+      socket.once('error', resolve);
+      socket.emit('join-session', { sessionId: 'Z'.repeat(5000), role: 'remote' });
+    });
+    await delay(200);
+
+    const line = (server.output.match(/\[session Z+\][^\n]*/) || [''])[0];
+    assert.ok(line.length < 200, `log line was ${line.length} chars, expected it truncated`);
+
     socket.close();
     await assertStillUp(server, 0);
   });

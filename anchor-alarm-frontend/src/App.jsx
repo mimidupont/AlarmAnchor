@@ -28,6 +28,7 @@ import {
   sessionErrorAction
 } from './utils/alarm';
 import { ensureDeviceId, initDeviceId } from './utils/deviceId';
+import { urlWithoutJoinParam } from './utils/joinLink';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -44,6 +45,18 @@ import './App.css';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+
+// Printed once at startup so "which backend is this build actually talking
+// to?" is answerable from the browser console, without DevTools archaeology
+// through the socket.io requests.
+//
+// This is not hypothetical: REACT_APP_BACKEND_URL is baked in at build time,
+// and a Vercel project-level environment variable silently overrides the
+// .env.production checked into the repo. When the two disagree the symptom is
+// a session that plainly exists — GET /api/sessions/<id> returns it — yet
+// every socket join is answered "Session not found", because the page is
+// asking a different server entirely.
+console.log(`⚓ Anchor Alarm — backend: ${BACKEND_URL}`);
 
 const THEMES = ['day', 'night', 'red'];
 
@@ -312,6 +325,17 @@ export default function App() {
 
       sessionRef.current = { sessionId: data.sessionId, role: 'main' };
       setSessionId(data.sessionId);
+      // The share screen renders createdSessionId, NOT sessionId — it is
+      // what the big code chip and the QR are built from. Leaving it behind
+      // meant that after a recovery the boat phone kept displaying a code
+      // that no longer exists on the server, so anyone reading it off the
+      // screen (or scanning the QR) got "Session not found" while the phone
+      // itself was perfectly healthy in a new session.
+      //
+      // Only refreshed when it was already set: a boat phone that joined an
+      // existing session by typing a code never had a share screen, and
+      // must not suddenly be given one.
+      setCreatedSessionId((current) => (current ? data.sessionId : current));
       retargetTrackStorage(previousId, data.sessionId);
 
       const socket = socketRef.current;
@@ -355,7 +379,7 @@ export default function App() {
     });
 
     newSocket.on('connect', () => {
-      console.log('✅ Connected to server');
+      console.log('✅ Connected to server', BACKEND_URL);
       setConnected(true);
       setError(null);
       // Re-join the session after a reconnection, otherwise the server
@@ -368,6 +392,18 @@ export default function App() {
         // picker if the code is stale.
         const joinId = joinParamRef.current.toUpperCase();
         joinParamRef.current = null;
+        // Consume it from the address bar too, not just from the ref.
+        // Otherwise the link is only one-shot within this page load: on the
+        // next reload the same stale code is auto-joined again, failing with
+        // "Session not found" every time, and the pre-filled join box offers
+        // the dead code back to the user.
+        try {
+          const cleaned = urlWithoutJoinParam(window.location.href);
+          if (cleaned) window.history.replaceState({}, '', cleaned);
+        } catch (err) {
+          // History unavailable — the join below still works, the link just
+          // stays in the bar.
+        }
         sessionRef.current = { sessionId: joinId, role: 'remote' };
         setSessionId(joinId);
         emitJoin(newSocket, sessionRef.current);

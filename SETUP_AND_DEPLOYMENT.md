@@ -194,10 +194,38 @@ session snapshot.
    - **Framework Preset**: React
    - **Build Command**: `npm run build`
    - **Output Directory**: `build`
-7. Add Environment Variable:
-   - Key: `REACT_APP_BACKEND_URL`
-   - Value: your Fly backend URL
+7. Environment variables: **normally leave these empty.**
+   `anchor-alarm-frontend/.env.production` is checked into the repo and
+   already carries the correct values, so Vercel needs nothing.
+
+   > ⚠️ A variable set in the Vercel dashboard **overrides**
+   > `.env.production` — it does not merge with it, and nothing warns you.
+   > A stale `REACT_APP_BACKEND_URL` left over from an earlier host is
+   > therefore invisible and produces a genuinely baffling symptom: the
+   > site loads, the socket connects, everything looks healthy — and every
+   > join is answered *"Session not found"*, because the browser is asking
+   > one backend while the phone talks to another. Meanwhile
+   > `GET /api/sessions/<id>` against the backend you *think* you are
+   > using returns the session in full.
+   >
+   > If you do set it here, it must match `.env.production` exactly:
+   > `REACT_APP_BACKEND_URL=https://alarmanchor-backend.fly.dev`
+   >
+   > These are baked in at **build time**, so changing one requires a
+   > redeploy — an existing deployment will not pick it up.
+
 8. Click "Deploy"
+9. Open the site and check the browser console. The first line names the
+   backend the build is actually using:
+
+   ```
+   ⚓ Anchor Alarm — backend: https://alarmanchor-backend.fly.dev
+   ```
+
+   If that is not the backend you expect, stop and fix it before testing
+   anything else — every other symptom will be a red herring until it is
+   right. Decommission any backend you are no longer using, or an old link
+   will keep creating sessions on a server nobody is watching.
 
 Your app is now live! 🎉
 

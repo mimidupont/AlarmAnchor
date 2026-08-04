@@ -422,6 +422,16 @@ io.on('connection', (socket) => {
     const session = sessions.get(sessionId);
 
     if (!session) {
+      // Logged, because a rejected join was otherwise completely invisible:
+      // a tester reports "Session not found" and `fly logs` has nothing to
+      // compare against the code the boat phone actually minted. Truncated
+      // and type-checked so a hostile or broken client cannot flood the log
+      // with a megabyte of "session id".
+      const attempted = typeof sessionId === 'string' ? sessionId.slice(0, 32) : '(invalid)';
+      console.warn(
+        `[session ${attempted || '-'}] join rejected as ${role || 'unknown'}: ` +
+          `no such session (${sessions.size} live)`
+      );
       socket.emit('error', 'Session not found');
       return;
     }

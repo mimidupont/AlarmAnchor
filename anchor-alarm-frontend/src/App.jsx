@@ -312,6 +312,17 @@ export default function App() {
 
       sessionRef.current = { sessionId: data.sessionId, role: 'main' };
       setSessionId(data.sessionId);
+      // The share screen renders createdSessionId, NOT sessionId — it is
+      // what the big code chip and the QR are built from. Leaving it behind
+      // meant that after a recovery the boat phone kept displaying a code
+      // that no longer exists on the server, so anyone reading it off the
+      // screen (or scanning the QR) got "Session not found" while the phone
+      // itself was perfectly healthy in a new session.
+      //
+      // Only refreshed when it was already set: a boat phone that joined an
+      // existing session by typing a code never had a share screen, and
+      // must not suddenly be given one.
+      setCreatedSessionId((current) => (current ? data.sessionId : current));
       retargetTrackStorage(previousId, data.sessionId);
 
       const socket = socketRef.current;

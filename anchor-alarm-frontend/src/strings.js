@@ -11,6 +11,7 @@ export const strings = {
     creating: 'Creating…',
     watchRemotely: '👀 Watch remotely',
     watchRemotelyNote: 'Join a session running on the boat',
+    createInAppNote: 'To start a session, use the Anchor Alarm app on the boat phone.',
     sessionIdPlaceholder: 'Session ID',
     join: 'Join',
     scanQr: 'Scan QR',
@@ -138,6 +139,8 @@ export const strings = {
     creating: 'Création…',
     watchRemotely: '👀 Suivre à distance',
     watchRemotelyNote: 'Rejoindre une session en cours sur le bateau',
+    createInAppNote:
+      "Pour démarrer une session, utilisez l'application Anchor Alarm sur le téléphone du bateau.",
     sessionIdPlaceholder: 'ID de session',
     join: 'Rejoindre',
     scanQr: 'Scanner le QR',

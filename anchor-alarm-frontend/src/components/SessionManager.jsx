@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { QRCodeSVG } from 'qrcode.react';
 import QrScanner from './QrScanner';
 import { useT } from '../i18n';
 import { APP_VERSION } from '../version';
+import { canCreateSession } from '../utils/platform';
 import './SessionManager.css';
 
 // The QR encodes a join URL so a stock camera app can open the hosted
@@ -41,6 +43,8 @@ export default function SessionManager({
   const copiedTimer = useRef(null);
 
   const canScan = typeof window !== 'undefined' && 'BarcodeDetector' in window;
+  // The hosted site is a remote monitor only — the boat phone runs the app.
+  const canCreate = canCreateSession(Capacitor.isNativePlatform(), process.env.NODE_ENV);
 
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
@@ -122,13 +126,15 @@ export default function SessionManager({
       <div className="session-container">
         <h1>{t('appTitle')}</h1>
 
-        <div className="card">
-          <h2>{t('startMonitoring')}</h2>
-          <p className="card-note">{t('startMonitoringNote')}</p>
-          <button className="card-btn card-btn-primary" onClick={handleCreate} disabled={loading}>
-            {loading ? t('creating') : t('createSession')}
-          </button>
-        </div>
+        {canCreate && (
+          <div className="card">
+            <h2>{t('startMonitoring')}</h2>
+            <p className="card-note">{t('startMonitoringNote')}</p>
+            <button className="card-btn card-btn-primary" onClick={handleCreate} disabled={loading}>
+              {loading ? t('creating') : t('createSession')}
+            </button>
+          </div>
+        )}
 
         <div className="card">
           <h2>{t('watchRemotely')}</h2>
@@ -155,6 +161,9 @@ export default function SessionManager({
               </button>
             )}
           </div>
+          {/* Without this the web page just looks like it is missing half
+              its options. Say where a session actually comes from. */}
+          {!canCreate && <p className="card-note">{t('createInAppNote')}</p>}
         </div>
 
         <div className="footer-row">

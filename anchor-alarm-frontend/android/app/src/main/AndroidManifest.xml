@@ -8,6 +8,14 @@
 <uses-permission android:name="android.permission.VIBRATE" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 <uses-permission android:name="android.permission.WAKE_LOCK" />
+<!-- In-app QR scanner. Without this getUserMedia() is rejected outright by
+     the webview, the scanner closes the instant it opens, and it looks like
+     the feature is simply broken. -->
+<uses-permission android:name="android.permission.CAMERA" />
+<!-- Not required: a phone with no camera must still install and run. The
+     app hides the scan button when scanning is unavailable. -->
+<uses-feature android:name="android.hardware.camera" android:required="false" />
+<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <application
 		android:usesCleartextTraffic="true"
         android:allowBackup="true"

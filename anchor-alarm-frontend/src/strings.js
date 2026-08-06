@@ -21,6 +21,11 @@ export const strings = {
     shareHint: 'Scan from another phone to watch remotely — or share the ID.',
     openMap: 'Open the map',
     scanHint: 'Point the camera at the session QR code',
+    scanErrorDenied: 'Camera access was refused. Allow the camera for Anchor Alarm in Android settings, then try again.',
+    scanErrorNoCamera: 'No usable camera was found on this device.',
+    scanErrorUnsupported: 'This device cannot scan QR codes in the app.',
+    scanErrorGeneric: 'The camera could not be started.',
+    scanErrorFallback: 'You can type the session ID instead — it works just as well.',
     cancel: 'Cancel',
 
     // Top strip / instrument panel
@@ -159,6 +164,11 @@ export const strings = {
     shareHint: "Scannez depuis un autre téléphone pour suivre à distance — ou partagez l'ID.",
     openMap: 'Ouvrir la carte',
     scanHint: 'Visez le QR code de la session',
+    scanErrorDenied: "L'accès à la caméra a été refusé. Autorisez la caméra pour Anchor Alarm dans les réglages Android, puis réessayez.",
+    scanErrorNoCamera: 'Aucune caméra utilisable sur cet appareil.',
+    scanErrorUnsupported: "Cet appareil ne peut pas scanner de QR code dans l'application.",
+    scanErrorGeneric: "La caméra n'a pas pu démarrer.",
+    scanErrorFallback: "Vous pouvez saisir l'ID de session à la place — cela fonctionne aussi bien.",
     cancel: 'Annuler',
 
     back: 'Retour',

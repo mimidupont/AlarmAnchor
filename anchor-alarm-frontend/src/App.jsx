@@ -44,6 +44,15 @@ import './App.css';
 // or the app is backgrounded — essential for an overnight anchor watch.
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
+// The alarm's actual noise, played on Android's ALARM stream.
+//
+// A notification channel's sound plays with USAGE_NOTIFICATION, and silent
+// mode and vibrate mode are defined as silencing precisely that — so the
+// anchor alarm was inaudible in the two states a phone is most likely to be
+// in overnight at anchor. The alarm stream is the one a phone set to silent
+// still wakes you with, which is the behaviour this needs.
+const AlarmAudio = registerPlugin('AlarmAudio');
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
 // Printed once at startup so "which backend is this build actually talking
@@ -274,6 +283,33 @@ export default function App() {
     initDeviceId();
   }, []);
 
+  // Re-push everything the boat phone is authoritative for.
+  //
+  // The phone keeps working with no network at all, so the skipper can move
+  // the anchor or redraw the zone while offline and the server knows
+  // nothing about it. Rejoining a session is not enough: the room
+  // membership comes back, but the state does not, and every watcher goes
+  // on showing the pre-outage zone around an anchor that has since moved —
+  // confidently, with no hint that it is stale.
+  //
+  // Safe to repeat: update-zone and update-anchor are idempotent, and the
+  // server only accepts restore-track into an empty track, so this cannot
+  // overwrite a longer history than the one it is offering.
+  const pushLocalState = (socket) => {
+    if (!socket) return;
+    if (zoneRef.current && zoneRef.current.length >= 3) {
+      socket.emit('update-zone', { zone: zoneRef.current });
+    }
+    if (anchorRef.current) {
+      // resetTrack: false — same anchoring, and the night's track is the
+      // diagnostic record. An outage must never clear it.
+      socket.emit('update-anchor', { anchor: anchorRef.current, resetTrack: false });
+    }
+    if (trackRef.current.length) {
+      socket.emit('restore-track', { track: trackRef.current });
+    }
+  };
+
   const clearOfflineWatch = () => {
     if (offlineTimer.current) {
       clearTimeout(offlineTimer.current);
@@ -325,7 +361,19 @@ export default function App() {
   }, []);
 
   const stopAlarm = async () => {
-    await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
+    // Stop the noise first, and independently of the notification: if
+    // cancelling the notification throws, the phone must not be left
+    // sounding an alarm nobody can silence.
+    try {
+      await AlarmAudio.stop();
+    } catch (err) {
+      // Web, or an older APK without the plugin — nothing was playing.
+    }
+    try {
+      await LocalNotifications.cancel({ notifications: [{ id: 1 }] });
+    } catch (err) {
+      console.warn('Could not cancel the alarm notification:', err);
+    }
   };
 
   // Session recovery on the boat phone.
@@ -371,17 +419,9 @@ export default function App() {
       const socket = socketRef.current;
       if (socket) {
         emitJoin(socket, sessionRef.current);
-        if (zoneRef.current && zoneRef.current.length >= 3) {
-          socket.emit('update-zone', { zone: zoneRef.current });
-        }
-        if (anchorRef.current) {
-          // resetTrack: false — this is the same anchoring, and the
-          // night's track has to survive the recovery.
-          socket.emit('update-anchor', { anchor: anchorRef.current, resetTrack: false });
-        }
-        if (trackRef.current.length) {
-          socket.emit('restore-track', { track: trackRef.current });
-        }
+        // Same resync as any other reconnect — the session is brand new and
+        // empty here, so this is what repopulates it.
+        pushLocalState(socket);
       }
 
       recoveryInterval.current = RECOVERY_MIN_INTERVAL_MS;
@@ -416,6 +456,14 @@ export default function App() {
       // no longer routes our updates and never checks the alarm.
       if (sessionRef.current) {
         emitJoin(newSocket, sessionRef.current);
+        // Every reconnect resyncs, not just the ones that lost the session.
+        // Anything changed during the outage exists only on this phone
+        // until it says so, and socket.io's own buffered emits are no help:
+        // they flush before join-session has run, so the server drops them
+        // for a socket that is not yet in any session.
+        if (sessionRef.current.role === 'main') {
+          pushLocalState(newSocket);
+        }
       } else if (joinParamRef.current) {
         // Arrived via a scanned QR link (?join=<ID>): join as remote
         // directly. The 'Session not found' error path returns to the
@@ -644,13 +692,37 @@ export default function App() {
       ? `Lat: ${boatLocation.latitude.toFixed(4)}, Lng: ${boatLocation.longitude.toFixed(4)}`
       : tRef.current('unknownLocation');
 
+    // Noise first. The notification is what wakes the screen and gives
+    // somewhere to tap, but it is not what has to be heard — and if
+    // scheduling it fails, the alarm must still be audible.
+    let audible = false;
+    try {
+      const status = await AlarmAudio.start();
+      audible = !!(status && status.playing);
+      if (status && status.alarmVolume === 0) {
+        // Nothing we can do about it without overriding a system volume
+        // the user chose, but it is worth knowing this happened when a
+        // tester reports "the alarm never went off".
+        console.warn('⚠️ Alarm stream volume is 0 — the alarm will be silent.');
+      }
+      console.log('Alarm audio:', JSON.stringify(status));
+    } catch (err) {
+      // Web, or an older APK without the plugin. Fall back to the
+      // notification sound below, which is better than nothing even
+      // though silent mode will suppress it.
+      console.warn('Alarm audio unavailable, falling back to the notification sound:', err);
+    }
+
     try {
       await LocalNotifications.schedule({
         notifications: [{
           id: 1,
           title: tRef.current('notifTitle'),
           body: tRef.current('notifBody', { loc: locationText }),
-          sound: 'alarm.mp3',
+          // Only ask the notification to make a sound when the alarm
+          // stream is not already doing it, so the two do not overlap
+          // into a mess on a phone that is not silenced.
+          ...(audible ? {} : { sound: 'alarm.mp3' }),
           ongoing: true,
           autoCancel: false,
           channelId: 'anchor-alarm'
@@ -660,6 +732,9 @@ export default function App() {
       console.error('Notification failed:', err);
     }
 
+    // Haptics on top of the plugin's own repeating waveform: harmless
+    // where both run, and the only vibration on a build without the
+    // plugin.
     try {
       for (let i = 0; i < 5; i++) {
         await Haptics.impact({ style: ImpactStyle.Heavy });

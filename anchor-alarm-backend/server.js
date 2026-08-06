@@ -591,6 +591,34 @@ io.on('connection', (socket) => {
     }
   });
 
+  // End the session deliberately — the boat phone closing the watch.
+  //
+  // Distinct from a socket simply going away, which is indistinguishable
+  // from a flat battery or a dead cellular link and must NOT tear the
+  // session down. This is the explicit "we are done here" that lets remote
+  // monitors say so instead of quietly showing a map that has stopped
+  // moving — the reading that looks reassuring and is not.
+  socket.on('end-session', () => {
+    const sessionId = socket.sessionId;
+    const session = sessions.get(sessionId);
+    if (!session) return;
+
+    // Only the boat phone owns the watch. A remote closing its tab must
+    // never end monitoring for the boat or for anyone else watching.
+    if (socket.role !== 'main') {
+      console.warn(
+        `${tag(sessionId, socket.deviceId)} ignored end-session from role ` +
+          `${socket.role || 'unknown'} — only the boat phone may end a session`
+      );
+      return;
+    }
+
+    console.log(`${tag(sessionId, socket.deviceId)} session ended by the boat phone`);
+    io.to(sessionId).emit('session-ended', { endedAt: new Date().toISOString() });
+    sessions.delete(sessionId);
+    markDirty();
+  });
+
   // Acknowledge alarm (reset after notification)
   socket.on('acknowledge-alarm', () => {
     const session = sessions.get(socket.sessionId);

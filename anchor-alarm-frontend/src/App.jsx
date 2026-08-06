@@ -108,6 +108,9 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [gpsError, setGpsError] = useState(null);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
+  // The boat phone ended the watch: a remote monitor must be told outright,
+  // not left inferring it from a map that stopped moving.
+  const [sessionEnded, setSessionEnded] = useState(false);
   // Set to the new session ID after a successful recovery, so the user can
   // re-share the code. Dismissible, and deliberately never a modal — the
   // map must stay usable.
@@ -545,6 +548,18 @@ export default function App() {
       }
     });
 
+    newSocket.on('session-ended', () => {
+      // The boat phone closed the watch deliberately. Say so, loudly and
+      // modally: a remote monitor whose map merely stops updating looks
+      // exactly like one whose boat is sitting quietly at anchor, and that
+      // is the dangerous way to read it.
+      //
+      // The boat phone itself initiated this and has already torn down.
+      if (sessionRef.current?.role === 'main') return;
+      stopAlarm();
+      setSessionEnded(true);
+    });
+
     newSocket.on('alarm-acknowledged', (data) => {
       // Someone (possibly on another device) acknowledged: silence the
       // local alarm too, and keep it silenced until back inside the zone.
@@ -915,12 +930,33 @@ export default function App() {
   };
 
   const leaveMainSession = () => {
+    // Tell the server before tearing down locally, so every remote monitor
+    // is told the watch is over rather than being left with a map that
+    // silently stops moving. Fire-and-forget: if it does not get through,
+    // the watchers fall back to the staleness warning, which is the same
+    // outcome as the boat phone dying.
+    try {
+      socketRef.current?.emit('end-session');
+    } catch (err) {
+      // Socket already gone — nothing to tell anyone.
+    }
     stopGpsTracking();
     stopAlarm();
     resetSessionState();
   };
 
+  // A remote closing its own monitor never ends the watch — the boat phone
+  // keeps alarming, and any other watcher keeps watching. The server
+  // enforces this too; this is just the client not asking.
   const leaveRemoteSession = () => {
+    resetSessionState();
+  };
+
+  // The watcher has read the "session ended" dialog. There is nothing left
+  // to show — the session is gone from the server — so go back to the
+  // picker rather than leaving a frozen map on screen.
+  const handleSessionEndedAck = () => {
+    setSessionEnded(false);
     resetSessionState();
   };
 
@@ -973,6 +1009,18 @@ export default function App() {
           anchor={anchor}
           boatLocation={Object.values(locations)[0] || null}
           zone={zone}
+        />
+      )}
+
+      {/* The boat phone ended the watch. Single action: there is nothing to
+          decide, only something the watcher has to have read. */}
+      {sessionEnded && (
+        <ConfirmDialog
+          title={t('sessionEndedTitle')}
+          message={t('sessionEndedMessage')}
+          confirmLabel={t('sessionEndedAck')}
+          danger
+          onConfirm={handleSessionEndedAck}
         />
       )}
 

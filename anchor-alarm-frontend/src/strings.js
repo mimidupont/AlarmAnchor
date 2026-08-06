@@ -45,6 +45,10 @@ export const strings = {
     // Leave-session dialog
     leaveTitle: 'Leave the session?',
     leaveMessage: 'If you leave now, the anchor position and zone will be lost.',
+    sessionEndedTitle: 'Session ended — monitoring finished',
+    sessionEndedMessage:
+      'The boat phone has closed this session. The boat is no longer being monitored and this screen will stop updating.',
+    sessionEndedAck: 'Understood',
     leave: 'Leave',
     stay: 'Stay',
 
@@ -171,6 +175,10 @@ export const strings = {
 
     leaveTitle: 'Quitter la session ?',
     leaveMessage: "Si vous quittez maintenant, la position de l'ancre et la zone seront perdues.",
+    sessionEndedTitle: 'Session terminée — surveillance arrêtée',
+    sessionEndedMessage:
+      "Le téléphone du bateau a fermé cette session. Le bateau n'est plus surveillé et cet écran ne sera plus mis à jour.",
+    sessionEndedAck: 'Compris',
     leave: 'Quitter',
     stay: 'Rester',
 

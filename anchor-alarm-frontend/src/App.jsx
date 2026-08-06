@@ -58,6 +58,16 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000'
 // asking a different server entirely.
 console.log(`⚓ Anchor Alarm — backend: ${BACKEND_URL}`);
 
+// How long the boat phone may be silent before a watcher is told outright
+// that nobody is monitoring. Matches the status pill's "no data" threshold,
+// so the pill and the modal never disagree about the same silence.
+//
+// A boat phone reconnects constantly — doze, a headland, a marina wifi
+// handover — and a modal on every blip is a modal nobody reads. Overridable
+// only so this can be exercised without a 90 s wait; production builds set
+// nothing and get the default.
+const BOAT_OFFLINE_GRACE_MS = Number(process.env.REACT_APP_OFFLINE_GRACE_MS) || 90 * 1000;
+
 const THEMES = ['day', 'night', 'red'];
 
 // localStorage persistence is web-only (nice-to-have); the Capacitor
@@ -111,6 +121,16 @@ export default function App() {
   // The boat phone ended the watch: a remote monitor must be told outright,
   // not left inferring it from a map that stopped moving.
   const [sessionEnded, setSessionEnded] = useState(false);
+  // The boat phone's socket dropped — app closed, killed, flat battery, no
+  // signal. Indistinguishable from each other, and all recoverable, so this
+  // warns immediately and only escalates to a modal if the silence lasts.
+  const [boatOffline, setBoatOffline] = useState(false);
+  const [monitoringStopped, setMonitoringStopped] = useState(false);
+  const offlineTimer = useRef(null);
+  // Set once the watcher has read the modal, so a single outage does not
+  // keep re-interrupting them. Cleared when the boat comes back, so a
+  // genuinely new outage warns again.
+  const monitoringStoppedAck = useRef(false);
   // Set to the new session ID after a successful recovery, so the user can
   // re-share the code. Dismissible, and deliberately never a modal — the
   // map must stay usable.
@@ -253,6 +273,13 @@ export default function App() {
   useEffect(() => {
     initDeviceId();
   }, []);
+
+  const clearOfflineWatch = () => {
+    if (offlineTimer.current) {
+      clearTimeout(offlineTimer.current);
+      offlineTimer.current = null;
+    }
+  };
 
   // Every join carries the stable device ID: the server keys the session's
   // live positions by it rather than by socket.id, so a night of flapping
@@ -548,6 +575,30 @@ export default function App() {
       }
     });
 
+    newSocket.on('boat-offline', () => {
+      if (sessionRef.current?.role === 'main') return;
+      setBoatOffline(true);
+      clearOfflineWatch();
+      // Grace period before shouting. A boat phone reconnects constantly —
+      // doze, a headland, a marina wifi handover — and a modal on every
+      // blip is a modal nobody reads. 90 s matches the staleness threshold
+      // the status pill already uses for "no data".
+      offlineTimer.current = setTimeout(() => {
+        if (!monitoringStoppedAck.current) setMonitoringStopped(true);
+      }, BOAT_OFFLINE_GRACE_MS);
+    });
+
+    newSocket.on('boat-online', () => {
+      if (sessionRef.current?.role === 'main') return;
+      // The boat is reporting again: cancel the pending warning, and take
+      // the modal away if it is already up — the situation it describes is
+      // no longer true.
+      clearOfflineWatch();
+      setBoatOffline(false);
+      setMonitoringStopped(false);
+      monitoringStoppedAck.current = false;
+    });
+
     newSocket.on('session-ended', () => {
       // The boat phone closed the watch deliberately. Say so, loudly and
       // modally: a remote monitor whose map merely stops updating looks
@@ -557,6 +608,11 @@ export default function App() {
       // The boat phone itself initiated this and has already torn down.
       if (sessionRef.current?.role === 'main') return;
       stopAlarm();
+      // A deliberate end supersedes any pending "went quiet" warning: the
+      // watcher should get one clear message, not two contradictory ones.
+      clearOfflineWatch();
+      setMonitoringStopped(false);
+      setBoatOffline(false);
       setSessionEnded(true);
     });
 
@@ -574,6 +630,7 @@ export default function App() {
 
     return () => {
       stopGpsTracking();
+      clearOfflineWatch();
       socketRef.current = null;
       newSocket.close();
     };
@@ -927,6 +984,13 @@ export default function App() {
     setLocations({});
     setAlarmedState(false);
     setAnchor(null);
+    // Leaving cancels any pending "the boat went quiet" escalation —
+    // otherwise it fires on the session picker, about a boat this device is
+    // no longer watching.
+    clearOfflineWatch();
+    monitoringStoppedAck.current = false;
+    setBoatOffline(false);
+    setMonitoringStopped(false);
   };
 
   const leaveMainSession = () => {
@@ -950,6 +1014,15 @@ export default function App() {
   // enforces this too; this is just the client not asking.
   const leaveRemoteSession = () => {
     resetSessionState();
+  };
+
+  // The watcher has read the "monitoring stopped" dialog. Unlike a session
+  // that ended, this one is recoverable — the session still exists and the
+  // boat may reconnect — so stay on the monitor with the last known
+  // position and a red pill, rather than dropping back to the picker.
+  const handleMonitoringStoppedAck = () => {
+    monitoringStoppedAck.current = true;
+    setMonitoringStopped(false);
   };
 
   // The watcher has read the "session ended" dialog. There is nothing left
@@ -1009,6 +1082,19 @@ export default function App() {
           anchor={anchor}
           boatLocation={Object.values(locations)[0] || null}
           zone={zone}
+        />
+      )}
+
+      {/* The boat phone has gone quiet for longer than the grace period.
+          Suppressed while the "session ended" dialog is up: one clear
+          message, not two that appear to contradict each other. */}
+      {monitoringStopped && !sessionEnded && (
+        <ConfirmDialog
+          title={t('monitoringStoppedTitle')}
+          message={t('monitoringStoppedMessage')}
+          confirmLabel={t('monitoringStoppedAck')}
+          danger
+          onConfirm={handleMonitoringStoppedAck}
         />
       )}
 
@@ -1130,6 +1216,7 @@ export default function App() {
           theme={theme}
           onCycleTheme={cycleTheme}
           connected={connected}
+          boatOffline={boatOffline}
           track={track}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />

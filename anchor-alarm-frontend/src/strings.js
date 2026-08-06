@@ -49,6 +49,10 @@ export const strings = {
     sessionEndedMessage:
       'The boat phone has closed this session. The boat is no longer being monitored and this screen will stop updating.',
     sessionEndedAck: 'Understood',
+    monitoringStoppedTitle: 'Monitoring stopped',
+    monitoringStoppedMessage:
+      'The boat phone is no longer reporting. The boat is not being watched. It may have been closed, lost signal, or run out of battery — if it reconnects, monitoring resumes on its own.',
+    monitoringStoppedAck: 'Understood',
     leave: 'Leave',
     stay: 'Stay',
 
@@ -64,6 +68,7 @@ export const strings = {
     pillGpsWeak: 'GPS weak',
     pillOfflineLocal: 'Offline — local only',
     pillOffline: 'Offline',
+    pillBoatOffline: 'Boat offline',
     pillNoData: 'No data',
     pillDataStale: 'Data stale',
     pillMonitoring: 'Monitoring',
@@ -179,6 +184,10 @@ export const strings = {
     sessionEndedMessage:
       "Le téléphone du bateau a fermé cette session. Le bateau n'est plus surveillé et cet écran ne sera plus mis à jour.",
     sessionEndedAck: 'Compris',
+    monitoringStoppedTitle: 'Surveillance interrompue',
+    monitoringStoppedMessage:
+      "Le téléphone du bateau ne transmet plus. Le bateau n'est plus surveillé. L'application a pu être fermée, perdre le réseau ou tomber en panne de batterie — s'il se reconnecte, la surveillance reprend d'elle-même.",
+    monitoringStoppedAck: 'Compris',
     leave: 'Quitter',
     stay: 'Rester',
 
@@ -192,6 +201,7 @@ export const strings = {
     pillGpsWeak: 'GPS faible',
     pillOfflineLocal: 'Hors ligne — local seul',
     pillOffline: 'Hors ligne',
+    pillBoatOffline: 'Bateau hors ligne',
     pillNoData: 'Pas de données',
     pillDataStale: 'Données anciennes',
     pillMonitoring: 'Surveillance',

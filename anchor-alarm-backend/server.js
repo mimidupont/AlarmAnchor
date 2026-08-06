@@ -468,6 +468,14 @@ io.on('connection', (socket) => {
     // Notify others in session. clientId is kept alongside deviceId for one
     // release: testers will be running mixed builds during the beta.
     io.to(sessionId).emit('client-joined', { clientId: deviceId, deviceId, role });
+
+    // The boat is reporting again — clears any "boat offline" state the
+    // watchers are showing. Emitted on every main join, including the
+    // reconnect after a tunnel or a doze, which is exactly the case that
+    // must cancel a pending "monitoring stopped" warning.
+    if (role === 'main') {
+      io.to(sessionId).emit('boat-online', { at: new Date().toISOString() });
+    }
   });
 
   // Update zone (from main app)
@@ -651,6 +659,17 @@ io.on('connection', (socket) => {
         delete session.locations[deviceId];
         if (session.deviceSockets) delete session.deviceSockets[deviceId];
         io.to(socket.sessionId).emit('client-left', { clientId: deviceId, deviceId });
+
+        // The boat phone specifically going quiet is the one a watcher has
+        // to be told about: app closed, killed, battery flat, no signal.
+        // The session is deliberately NOT deleted — this is recoverable,
+        // and tearing it down would end the watch every time the boat
+        // passed a headland. Watchers warn now and escalate only if the
+        // silence lasts; a reconnect emits 'boat-online' and cancels it.
+        if (socket.role === 'main') {
+          console.log(`${tag(socket.sessionId, deviceId)} boat phone went offline`);
+          io.to(socket.sessionId).emit('boat-offline', { at: new Date().toISOString() });
+        }
       }
       return;
     }

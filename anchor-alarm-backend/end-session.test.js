@@ -179,6 +179,108 @@ describe('a remote monitor cannot end the watch', () => {
   });
 });
 
+describe('the boat phone going quiet without ending the session', () => {
+  it('tells watchers the boat went offline, but keeps the session alive', async () => {
+    // App closed, killed, flat battery, no signal — indistinguishable, and
+    // all recoverable. The watcher must be told; the session must survive.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    const watcher = await connect(server.base);
+    await joinSession(watcher, sessionId, 'remote', 'device-watcher');
+    await delay(200);
+
+    const offline = waitFor(watcher, 'boat-offline', 4000);
+    boat.close();
+    const notice = await offline;
+
+    assert.ok(notice, 'the watcher must be told the boat stopped reporting');
+    assert.ok(Date.parse(notice.at) > 0);
+    assert.match(server.output, /boat phone went offline/);
+
+    // Crucially the session is NOT torn down: this is recoverable.
+    assert.equal((await fetch(`${server.base}/api/sessions/${sessionId}`)).status, 200);
+
+    watcher.close();
+  });
+
+  it('tells watchers when the boat comes back, so the warning can be cancelled', async () => {
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    const watcher = await connect(server.base);
+    await joinSession(watcher, sessionId, 'remote', 'device-watcher');
+    await delay(200);
+
+    boat.close();
+    assert.ok(await waitFor(watcher, 'boat-offline', 4000));
+
+    // The boat reconnects — a tunnel, a doze, a wifi handover.
+    const online = waitFor(watcher, 'boat-online', 4000);
+    const boatAgain = await connect(server.base);
+    await joinSession(boatAgain, sessionId, 'main', 'device-boat');
+    assert.ok(await online, 'the watcher must be told the boat is reporting again');
+
+    boatAgain.close();
+    watcher.close();
+  });
+
+  it('does not cry wolf when a remote monitor leaves', async () => {
+    // Only the boat going quiet matters. A watcher closing its tab must not
+    // make the other watchers think the boat is unattended.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    const watcherA = await connect(server.base);
+    await joinSession(watcherA, sessionId, 'remote', 'device-a');
+    const watcherB = await connect(server.base);
+    await joinSession(watcherB, sessionId, 'remote', 'device-b');
+    await delay(200);
+
+    watcherA.close();
+    await delay(800);
+    assert.equal(await waitFor(watcherB, 'boat-offline', 500), null);
+
+    boat.close();
+    watcherB.close();
+  });
+
+  it('stays quiet when a stale socket dies after the boat already reconnected', async () => {
+    // The flapping case: the replacement socket is live, so the late
+    // disconnect of the old one must not report the boat as offline.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const first = await connect(server.base);
+    await joinSession(first, sessionId, 'main', 'device-boat');
+    const watcher = await connect(server.base);
+    await joinSession(watcher, sessionId, 'remote', 'device-watcher');
+    await delay(200);
+
+    // New socket for the same device joins before the old one notices.
+    const second = await connect(server.base);
+    await joinSession(second, sessionId, 'main', 'device-boat');
+    await delay(200);
+
+    first.close(); // the stale socket finally drops
+    await delay(900);
+    assert.equal(
+      await waitFor(watcher, 'boat-offline', 600),
+      null,
+      'a superseded socket dying must not raise a false alarm'
+    );
+
+    second.close();
+    watcher.close();
+  });
+});
+
 describe('an ended session does not come back', () => {
   it('stays gone across a restart', async () => {
     // The snapshot must not resurrect a watch its owner deliberately closed.

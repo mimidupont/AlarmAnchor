@@ -1,0 +1,16 @@
+[debug] [2026-08-06T19:46:33.690Z] ----------------------------------------------------------------------
+[debug] [2026-08-06T19:46:33.694Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\Test\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js appdistribution:distribute android/app/build/outputs/apk/release/app-release.apk --app 1:661000526462:android:21bd203bee54816824d62f --groups crew
+[debug] [2026-08-06T19:46:33.694Z] CLI Version:   15.25.1
+[debug] [2026-08-06T19:46:33.694Z] Platform:      win32
+[debug] [2026-08-06T19:46:33.695Z] Node Version:  v24.18.0
+[debug] [2026-08-06T19:46:33.695Z] Detected Agent: unknown
+[debug] [2026-08-06T19:46:33.695Z] Time:          Thu Aug 06 2026 21:46:33 GMT+0200 (Central European Summer Time)
+[debug] [2026-08-06T19:46:33.695Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-08-06T19:46:33.711Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-08-06T19:46:33.711Z] > authorizing via signed-in user (michel.dupont.cz@gmail.com)
+[info] i  uploading binary... 
+[debug] [2026-08-06T19:46:33.732Z] Checked if tokens are valid: true, expires at: 1786048058266
+[debug] [2026-08-06T19:46:33.732Z] Checked if tokens are valid: true, expires at: 1786048058266
+[debug] [2026-08-06T19:46:33.733Z] >>> [apiv2][query] POST https://firebaseappdistribution.googleapis.com/upload/v1/projects/661000526462/apps/1:661000526462:android:21bd203bee54816824d62f/releases:upload [none]
+[debug] [2026-08-06T19:46:33.734Z] >>> [apiv2][body] POST https://firebaseappdistribution.googleapis.com/upload/v1/projects/661000526462/apps/1:661000526462:android:21bd203bee54816824d62f/releases:upload [stream]

@@ -26,7 +26,7 @@ const WEAK_ACCURACY_M = 25;
  *
  * Tapping the pill opens a sheet listing each subsystem with a status dot.
  */
-export default function StatusPill({ mode, connected, boatLocation, gpsError, armed }) {
+export default function StatusPill({ mode, connected, boatLocation, gpsError, armed, boatOffline }) {
   const t = useT();
   const [sheetOpen, setSheetOpen] = useState(false);
   // Re-evaluate staleness every 5s even without new data.
@@ -50,6 +50,12 @@ export default function StatusPill({ mode, connected, boatLocation, gpsError, ar
     if (!connected) {
       state = 'danger';
       label = t('pillOffline');
+    } else if (boatOffline) {
+      // The server told us the boat phone's socket dropped. Said at once,
+      // rather than waiting for the fix to age out: our own connection is
+      // fine, so "no data" would read as our problem instead of the boat's.
+      state = 'danger';
+      label = t('pillBoatOffline');
     } else if (gpsDead) {
       state = 'danger';
       label = t('pillNoData');

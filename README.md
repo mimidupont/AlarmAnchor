@@ -1,206 +1,261 @@
-# ⚓ Anchor Alarm - Real-Time Boat Monitoring System
+# ⚓ Anchor Alarm — real-time boat anchor watch
 
-A real-time location-based alarm system for boats. Get instant notifications when your boat drifts outside a designated anchor zone. Monitor your boat from multiple phones simultaneously.
+Wakes you if your boat drags its anchor. The boat's phone watches its own GPS
+against a zone you set around the anchor; anyone ashore can watch the same
+session from a second phone or a browser.
 
-## 🎯 Features
+Two roles, and they are not symmetric:
 
-- **✏️ Draw Custom Zones**: Define anchor zones directly on the map
-- **📍 Real-Time Tracking**: GPS updates every 10 seconds
-- **🚨 Instant Alerts**: Notifications + audio + vibration when boat leaves zone
-- **👁️ Remote Monitoring**: Watch your boat from another phone anywhere
-- **📡 Live Sync**: All connected devices get real-time updates
-- **🌐 Works Online & Offline**: GPS tracking works without internet (remote requires internet)
-- **🎨 Web-Based**: Test on Windows laptop, deploy to Android
+| | **Boat phone** (`main`) | **Remote monitor** (`remote`) |
+| --- | --- | --- |
+| Runs | the Android app | the app, or the hosted website |
+| Owns | GPS, the zone, the alarm | nothing |
+| Creates the session | yes | no |
+| If it fails | the boat is unwatched | somebody ashore sees less |
 
-## 🚀 Quick Start (Windows)
+**The alarm is decided on the boat phone, from its own GPS.** Losing the
+internet at anchor degrades the remote monitoring and nothing else — the
+alarm still fires. Everything else in this repo exists to serve that.
 
-### 1. Install Requirements
-- Node.js 14+ from [nodejs.org](https://nodejs.org/)
+## 🎯 What it does
 
-### 2. Start Backend (Terminal 1)
+- **Anchor zone** — drop the anchor, pick a radius, or drag the vertices into
+  a hand-drawn shape around a quay or a mooring.
+- **Local alarm** — the boat phone evaluates every GPS fix against the zone
+  itself. No server involved.
+- **Alarm stream audio** — the alarm plays on Android's *alarm* stream, so a
+  phone set to silent or vibrate still sounds it. Do Not Disturb can still
+  suppress it unless alarms are allowed through; that is a device setting no
+  app can override.
+- **Foreground service** — GPS keeps running with the screen off and the app
+  backgrounded.
+- **Track** — the night's swing, capped at 3000 points, kept across
+  reconnects and server restarts. The most diagnostic view there is when
+  working out whether a 4 a.m. alarm was real.
+- **Remote monitoring** — join by code or QR from another phone or a browser.
+  Watchers are told when the boat goes quiet, and when the watch is ended
+  deliberately.
+- **Survives restarts** — sessions are snapshotted to disk, so a deploy or a
+  host migration is not the end of the night's watch.
+
+## 🚀 Running it locally
+
+Node 20+ (the test runner and global `fetch` need 18 as a hard floor;
+production runs Node 22).
+
 ```bash
+# terminal 1 — backend on :5000
 cd anchor-alarm-backend
 npm install
 npm start
-# Backend runs on http://localhost:5000
-```
 
-### 3. Start Frontend (Terminal 2)
-```bash
+# terminal 2 — frontend on :3000
 cd anchor-alarm-frontend
 npm install
 npm start
-# App opens at http://localhost:3000
 ```
 
-### 4. Test
-- Open two browser windows
-- Create session in window 1 (boat monitor)
-- Join session in window 2 (remote monitor)
-- Draw a zone on the map
-- Simulate GPS movement (DevTools → Sensors)
+Then open two browser windows: create a session in one, join it with the
+code in the other, and move the boat with Chrome DevTools → Sensors →
+Location.
 
-**See [SETUP_AND_DEPLOYMENT.md](./SETUP_AND_DEPLOYMENT.md) for detailed instructions.**
+> **Creating a session only works in a development build.** A production web
+> build offers joining only — the hosted site is a remote monitor, because a
+> browser tab has no foreground service, no background GPS and no alarm that
+> survives a locked screen. The boat phone always runs the app. See
+> `src/utils/platform.js`.
 
-## 📁 Project Structure
+See [SETUP_AND_DEPLOYMENT.md](./SETUP_AND_DEPLOYMENT.md) for deployment and
+[ANDROID_BUILD.md](./ANDROID_BUILD.md) / [DISTRIBUTION.md](./DISTRIBUTION.md)
+for the APK.
 
-```
-.
-├── anchor-alarm-backend/       # Node.js + Socket.io server
-│   ├── server.js
-│   └── package.json
-├── anchor-alarm-frontend/      # React web app
-│   ├── src/
-│   │   ├── App.jsx
-│   │   └── components/
-│   ├── public/
-│   └── package.json
-└── SETUP_AND_DEPLOYMENT.md     # Full setup guide
+## 🧪 Tests
+
+```bash
+cd anchor-alarm-backend  && npm test    # 81 tests
+cd anchor-alarm-frontend && npm test    # 74 tests
 ```
 
-## 🏗️ Architecture
+The backend suite spawns real server processes rather than requiring the
+module, because most of what it asserts — restart recovery, `kill -9`
+mid-write, CORS, socket lifecycle — is only true across a process boundary.
+It takes a few minutes.
 
-```
-┌─────────────────┐                ┌─────────────────┐
-│  Main App       │                │  Remote Monitor │
-│  (Boat's Phone) │◄──────────────►│  (Any Phone)    │
-│                 │   Socket.io    │                 │
-│ • Draw Zone     │   Real-time    │ • View Location │
-│ • GPS Tracking  │   Sync         │ • View Zone     │
-│ • Alarm Trigger │                │ • Alarm Status  │
-└────────┬────────┘                └────────┬────────┘
-         │                                  │
-         └──────────────┬───────────────────┘
-                        │
-                   ┌────▼─────┐
-                   │ Backend   │
-                   │ Node.js + │
-                   │ Socket.io │
-                   │           │
-                   │ • Manage  │
-                   │   sessions│
-                   │ • Sync    │
-                   │   data    │
-                   │ • Detect  │
-                   │   alerts  │
-                   └───────────┘
+```bash
+cd anchor-alarm-backend
+npm run test:unit         # snapshot serialisation only, fast
+npm run test:integration  # the slow process-level ones
+npm run load-sim -- --duration 2h    # 20 simulated boats, dev only
 ```
 
-## 🔌 How It Works
+`scripts/load-sim.js` opens 20 sessions with 40 sockets, walks them around
+and drives three outside their zones. It spawns its own server unless given
+`--url`. **Never point it at a backend real testers are anchored on.**
 
-1. **Create Session**: Main app creates unique session ID
-2. **Join Session**: Remote phones join using session ID
-3. **Draw Zone**: Main app draws polygon on map
-4. **Track Position**: GPS updates sent every 10 seconds
-5. **Geofencing**: Backend checks if location inside polygon
-6. **Alert**: If outside zone → notification + sound + vibration
-7. **Sync**: All connected devices notified in real-time
+## 📁 Layout
 
-## 🧪 Testing
+```
+anchor-alarm-backend/          Node + Express + Socket.io relay
+  server.js                    sessions, geofence, CORS, rate limits
+  snapshot.js                  crash-safe session persistence
+  server-harness.js            spawns real servers for the tests
+  *.test.js                    snapshot, restart, abuse, CORS, geofence,
+                               end-session, reconnect-sync
+  scripts/load-sim.js          20-boat load simulation
+  fly.toml, Dockerfile         deployment (single always-on machine)
 
-### Local (Windows Browser)
-- Simulate GPS in Chrome DevTools (F12 → Sensors)
-- Simulate GPS in Firefox (Console → geolocation)
+anchor-alarm-frontend/         React 18 + Leaflet, and the Android app
+  src/App.jsx                  session, GPS watcher, alarm, socket wiring
+  src/components/              map, remote monitor, zone editor, dialogs
+  src/utils/                   alarm decision, geo, track, platform, ids
+  src/*.test.js, src/utils/*.test.js
+  android/                     Capacitor project
+    .../AlarmAudioPlugin.java  alarm-stream audio + vibration
+  public/service-worker.js     a tombstone that unregisters itself
+```
 
-### Real Phone
-- Deploy backend + frontend
-- Open app on Android phone
-- Real GPS coordinates used
+## 🏗️ How it fits together
 
-### Both Devices
-- Start main app on phone 1
-- Start remote app on phone 2
-- Changes sync instantly
+```
+     Boat phone (main)                       Remote monitor
+  ┌────────────────────┐                 ┌────────────────────┐
+  │ GPS watcher        │                 │ map + instruments  │
+  │ zone + anchor      │                 │ alarm state        │
+  │ ALARM DECISION ★   │                 │ (read only)        │
+  └─────────┬──────────┘                 └─────────┬──────────┘
+            │            Socket.io                 │
+            └──────────────┐        ┌──────────────┘
+                           ▼        ▼
+                     ┌──────────────────┐
+                     │ Backend (Fly.io) │
+                     │ one machine      │
+                     │ • relays state   │
+                     │ • evaluates the  │
+                     │   zone for the   │
+                     │   watchers       │
+                     │ • snapshots to   │
+                     │   a volume       │
+                     └──────────────────┘
 
-## 📦 Dependencies
+★ The alarm is decided here, not on the server. The server runs the same
+  point-in-polygon test so watchers see the right thing, but it is never
+  what makes the boat phone sound.
+```
 
-**Backend:**
-- Express 4.18.2
-- Socket.io 4.5.4
-- CORS enabled
+Sessions live in memory and are snapshotted to a Fly volume every 30 s and on
+shutdown, so a restart restores them. Idle sessions expire after 24 hours;
+the sweep runs hourly. Writes are atomic — a `kill -9` mid-write leaves the
+previous snapshot intact, never a truncated one.
 
-**Frontend:**
-- React 18.2.0
-- Leaflet 1.9.4 (maps)
-- Leaflet-Draw 1.1.4 (zone drawing)
-- Socket.io-client 4.5.4
+## 🔌 The wire protocol
+
+The events that carry meaning. The server also broadcasts the derived ones a
+client just applies — `state-update`, `location-updated`, `zone-updated`,
+`anchor-updated`, `track-point`, `track-reset`, `alarm-status-changed`,
+`alarm-acknowledged`, `client-joined`, `client-left`.
+
+| Event | From | Meaning |
+| --- | --- | --- |
+| `join-session` | both | join, and receive the current state |
+| `update-location` | main | a GPS fix; the server thins it into the track |
+| `update-zone` / `update-anchor` | main | the zone or anchor changed |
+| `restore-track` | main | bulk-restore a locally held track |
+| `acknowledge-alarm` | both | silence until the boat re-enters the zone |
+| `end-session` | main only | the watch is over; session deleted |
+| `boat-offline` / `boat-online` | server | the boat phone's socket dropped / came back |
+| `session-ended` | server | the boat phone ended the watch |
+
+The boat phone re-pushes its zone, anchor and track on **every** reconnect,
+not just when the server has lost the session. It keeps working with no
+network, so anything changed during an outage exists only on that phone
+until it says so again.
+
+HTTP is only `POST /api/sessions`, `GET /api/sessions/:id` and `GET /health`.
+There is no route for `/` — a bare visit to the backend returning
+`Cannot GET /` is Express answering, not a fault.
 
 ## ☁️ Deployment
 
-### Quick Deploy (Free Tier)
-1. Backend → [Fly.io](https://fly.io) (Node.js, one always-on machine — see
-   [`anchor-alarm-backend/DEPLOY_FLY.md`](anchor-alarm-backend/DEPLOY_FLY.md))
-2. Frontend → [Vercel.com](https://vercel.com) (React)
-3. Takes ~5 minutes total
+- **Backend** → Fly.io, **one** always-on machine with a volume. Never scale
+  past one: sessions live in that machine's memory and its own volume. See
+  [`anchor-alarm-backend/DEPLOY_FLY.md`](anchor-alarm-backend/DEPLOY_FLY.md).
+- **Frontend** → Vercel, built from `anchor-alarm-frontend`.
+- **Android** → `npm run ship:android` (build + Firebase App Distribution).
 
-**See SETUP_AND_DEPLOYMENT.md for step-by-step instructions.**
+> ⚠️ `anchor-alarm-frontend/.env.production` is committed and already holds
+> the right backend URL. A `REACT_APP_BACKEND_URL` set in the Vercel
+> dashboard **overrides** it silently, and a stale value there produces a
+> memorably confusing failure: the site loads, the socket connects, and every
+> join is answered "Session not found" — because the browser is asking a
+> different backend than the phone. Check the first line the app logs to the
+> browser console before debugging anything else:
+>
+> ```
+> ⚓ Anchor Alarm — backend: https://alarmanchor-backend.fly.dev
+> ```
 
 ## 🔒 Security
 
-Current MVP has no authentication (anyone with Session ID can view). For production:
+No authentication: anyone with a session ID can watch that boat. Session IDs
+are 9 characters from a 32-character unambiguous alphabet (no `I`, `O`, `0`,
+`1`), crypto-random, so guessing is impractical — but they are the only thing
+protecting a session.
 
-- [ ] Add user authentication
-- [ ] Encrypt location data
-- [ ] Use HTTPS only
-- [ ] Add rate limiting
-- [ ] Database for persistence
+Already in place: a browser origin allow-list, rate limiting on session
+creation (30/hour/IP) and on socket join attempts, payload validation and
+size caps, and a session cap with least-recently-active eviction.
+
+Not in place, and would be needed for anything beyond a friendly beta:
+user accounts, authorisation on join, encryption of stored positions, and a
+real database.
 
 ## 🐛 Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Backend won't start | Port 5000 in use? Try: `PORT=5001 npm start` |
-| Frontend can't connect | Check `.env` file has correct backend URL |
-| GPS not working | Browser needs geolocation permission |
-| Map not loading | Check Leaflet CSS imported (automatic) |
-| Socket.io errors | Check backend running + CORS enabled |
+| Symptom | Cause |
+| --- | --- |
+| Website loads but every join says "Session not found" | The build is talking to the wrong backend. Check the console line above. |
+| Website is blank, incognito works | A stale service worker on that device. Refresh two or three times; it now unregisters itself. |
+| Remote works in the app but not in a browser | CORS. `fly logs` prints `[cors] rejected origin …` with the exact hostname. |
+| Alarm doesn't sound on silent | Check the alarm *stream* volume, and whether DND is allowing alarms. |
+| QR scanner opens and closes instantly | Camera permission refused for the app. |
+| Backend won't start | Port 5000 in use — `PORT=5001 npm start`. |
+| `Cannot GET /` on the backend URL | Expected. Use `/health`. |
 
-## 🎮 Usage Guide
+## 📊 Measured, not guessed
 
-### For Boat Monitor (Main App)
-1. Click "Create New Session"
-2. Share Session ID with others
-3. Draw anchor zone on map
-4. GPS updates automatically
-5. Get alert if boat leaves zone
+From a 20-boat load simulation against a local instance of the deployed
+build (`npm run load-sim`):
 
-### For Remote Monitor
-1. Click "Join Session"
-2. Paste Session ID
-3. Watch boat position in real-time
-4. See when boat enters/leaves zone
-5. Get same alerts as boat phone
+- 20 sessions, 40 sockets, ~9,000 location fixes, **0 socket errors**
+- snapshot writes at exactly 30.0 s intervals — 0.019 writes per fix, not one
+  per fix
+- mid-run restart: **20/20 sessions recovered**
+- a simulated 24-hour session holds the track at exactly the 3000-point cap,
+  with RSS flat (−0.2%) and a 153 KB snapshot
 
-## 📊 Performance
+**Not yet established:** the checklist's two-hour flat-memory run. The run
+was stopped at 1h15m with RSS rising 2.64 MB/h (peak 76 MB of 256 MB). That
+is consistent with tracks filling toward their cap rather than a leak — the
+24-hour test above drives them *to* the cap and shows memory flat — but the
+plateau has not actually been observed. Treat it as unverified.
 
-- GPS polling: 10 seconds
-- Zone sync: Real-time
-- Location update: Real-time
-- Memory: In-memory (cleaned every hour)
-- Can handle 100+ simultaneous connections
+## 📋 Status
 
-## 🚀 Next Steps
+Pre-beta. Known gaps, honestly:
 
-1. **Develop locally** (Windows laptop)
-2. **Deploy to cloud** (Fly.io + Vercel)
-3. **Test on Android**
-4. **Add features** (notifications, history, etc)
-5. **Deploy to Play Store** (if needed)
+- The two-hour memory soak above is incomplete.
+- The APK fingerprint has not been checked against the reference SHA-256 in
+  [DISTRIBUTION.md](./DISTRIBUTION.md).
+- The alarm-stream audio plugin is new and needs verifying on real hardware
+  in silent, vibrate and Do Not Disturb.
+- Remote monitors in a browser get no sound of their own when the alarm
+  fires — only the boat phone makes noise.
+- Whether the foreground service survives swiping the app from recents is
+  device-dependent and not yet characterised per manufacturer.
+
+Anyone testing this should keep their existing anchor watch running
+alongside it.
 
 ## 📄 License
 
 MIT
-
-## 👨‍💻 Development
-
-Built with:
-- Node.js + Express (backend)
-- React 18 + Leaflet (frontend)
-- Socket.io (real-time sync)
-- OpenStreetMap (free maps)
-
----
-
-**Questions?** See [SETUP_AND_DEPLOYMENT.md](./SETUP_AND_DEPLOYMENT.md) for comprehensive guide.
-
-Happy sailing! ⚓🚤

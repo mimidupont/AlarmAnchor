@@ -701,17 +701,23 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     disableVertexEditing({ save: false });
     drawnItems.current?.clearLayers();
     setZoneEditing(false);
-    // Clear the zone as well as the anchor: leaving it behind would keep
-    // the alarm armed on a stale zone while motoring away from it.
-    onZoneUpdate([]);
+    // onClearAnchor drops the zone along with the anchor — leaving it
+    // behind would keep the alarm armed on a stale zone while motoring
+    // away from it. This only has to take the polygon off the map.
     onClearAnchor();
   };
 
   // Keep the popup's button handlers pointing at the latest versions of
   // these functions (the popup itself is created once, outside React).
+  //
+  // "Remove anchor" in the popup goes through the same confirmation and the
+  // same teardown as "Raise anchor" in the action bar. It used to call
+  // onClearAnchor directly, which cleared the anchor but left the zone
+  // polygon on the map and armed — and it did so with a single tap on a
+  // small target, unconfirmed.
   useEffect(() => {
     handleAdjustRadiusRef.current = handleAdjustZone;
-    onClearAnchorRef.current = onClearAnchor;
+    onClearAnchorRef.current = () => setConfirmRaiseOpen(true);
     onMoveAnchorRef.current = handleStartMoveAnchor;
   });
 

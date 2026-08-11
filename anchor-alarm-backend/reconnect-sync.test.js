@@ -54,11 +54,12 @@ const circle = (lat, lng, radius, steps = 16) =>
 // What the boat phone does on (re)joining: announce itself, then re-push
 // everything it is authoritative for. This is the contract the client has
 // to honour; the tests below assert the watcher-visible consequences.
-const resyncAsBoat = async (socket, sessionId, { zone, anchor, track }) => {
+const resyncAsBoat = async (socket, sessionId, { zone, anchor, track, acknowledged }) => {
   await joinSession(socket, sessionId, 'main', 'device-boat');
   if (zone) socket.emit('update-zone', { zone });
   if (anchor) socket.emit('update-anchor', { anchor, resetTrack: false });
   if (track && track.length) socket.emit('restore-track', { track });
+  if (acknowledged) socket.emit('acknowledge-alarm');
   await delay(300);
 };
 
@@ -203,6 +204,86 @@ describe('the boat phone reconnecting after an outage', () => {
 
     boatAgain.close();
     watcher.close();
+  });
+});
+
+describe('an alarm the skipper already silenced', () => {
+  // Session recovery mints a brand-new session, and a new session has
+  // acknowledged=false. The boat is still outside its zone — that is the
+  // normal state after silencing an alarm and motoring off — so the very
+  // first fix into the new session made the server raise the alarm again
+  // and broadcast it. On the boat phone that was a siren and a full-screen
+  // takeover returning for no reason but a backend deploy.
+  it('stays silent after a recovery re-pushes the acknowledgement', async () => {
+    const server = await boot();
+    const zone = circle(LAT, LNG, 40);
+    const outside = fix(LAT + 200 / 111320, LNG);
+
+    // The original session: armed, dragged out of the zone, then silenced.
+    const firstId = await createSession(server.base);
+    const boat = await connect(server.base);
+    await resyncAsBoat(boat, firstId, { zone, anchor: { latitude: LAT, longitude: LNG, accuracy: 4 } });
+    boat.emit('update-location', { location: outside });
+    await delay(300);
+    boat.emit('acknowledge-alarm');
+    await delay(300);
+    assert.equal(
+      (await (await fetch(`${server.base}/api/sessions/${firstId}`)).json()).alarmed,
+      false,
+      'precondition: the alarm is silenced before the restart'
+    );
+    boat.close();
+
+    // The backend loses the session; the phone mints a new one and
+    // re-pushes everything it is authoritative for, the acknowledgement
+    // included, then goes on reporting from outside the zone.
+    const recoveredId = await createSession(server.base);
+    const boatAgain = await connect(server.base);
+    await resyncAsBoat(boatAgain, recoveredId, {
+      zone,
+      anchor: { latitude: LAT, longitude: LNG, accuracy: 4 },
+      acknowledged: true
+    });
+
+    const watcher = await connect(server.base);
+    await joinSession(watcher, recoveredId, 'remote', 'device-watcher');
+    const reRaised = waitFor(watcher, 'alarm-status-changed', 2000);
+
+    boatAgain.emit('update-location', { location: outside });
+    await delay(500);
+
+    assert.equal(await reRaised, null, 'the recovered session must not re-raise the alarm');
+    const body = await (await fetch(`${server.base}/api/sessions/${recoveredId}`)).json();
+    assert.equal(body.alarmed, false, 'and the watchers must not be shown a phantom alarm');
+
+    boatAgain.close();
+    watcher.close();
+  });
+
+  it('re-arms once the boat is back inside the zone', async () => {
+    // The acknowledgement must not be sticky: a boat that returns and drags
+    // again has to sound. This is the property the re-push must not break.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+    const zone = circle(LAT, LNG, 40);
+
+    const boat = await connect(server.base);
+    await resyncAsBoat(boat, sessionId, {
+      zone,
+      anchor: { latitude: LAT, longitude: LNG, accuracy: 4 },
+      acknowledged: true
+    });
+
+    boat.emit('update-location', { location: fix(LAT, LNG) }); // back inside: re-arms
+    await delay(300);
+
+    const raised = waitFor(boat, 'alarm-status-changed', 3000);
+    boat.emit('update-location', { location: fix(LAT + 200 / 111320, LNG) });
+
+    const event = await raised;
+    assert.ok(event && event.alarmed === true, 'a fresh drag after re-entering must alarm');
+
+    boat.close();
   });
 });
 

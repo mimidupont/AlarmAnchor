@@ -72,7 +72,7 @@ for the APK.
 ## 🧪 Tests
 
 ```bash
-cd anchor-alarm-backend  && npm test    # 81 tests
+cd anchor-alarm-backend  && npm test    # 83 tests
 cd anchor-alarm-frontend && npm test    # 74 tests
 ```
 
@@ -165,10 +165,17 @@ client just applies — `state-update`, `location-updated`, `zone-updated`,
 | `boat-offline` / `boat-online` | server | the boat phone's socket dropped / came back |
 | `session-ended` | server | the boat phone ended the watch |
 
-The boat phone re-pushes its zone, anchor and track on **every** reconnect,
-not just when the server has lost the session. It keeps working with no
-network, so anything changed during an outage exists only on that phone
-until it says so again.
+The boat phone re-pushes its zone, anchor, track and — if the alarm has been
+silenced — its acknowledgement on **every** reconnect, not just when the
+server has lost the session. It keeps working with no network, so anything
+changed during an outage exists only on that phone until it says so again.
+The acknowledgement matters as much as the rest: a recovered session starts
+with `acknowledged: false`, and without the re-push the server would raise
+the alarm again on the next fix from a boat that is outside its zone quite
+deliberately.
+
+`alarm-status-changed` is for the watchers. The boat phone ignores it and
+uses its own local verdict — the server is never what makes it sound.
 
 HTTP is only `POST /api/sessions`, `GET /api/sessions/:id` and `GET /health`.
 There is no route for `/` — a bare visit to the backend returning

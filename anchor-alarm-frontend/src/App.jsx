@@ -308,6 +308,13 @@ export default function App() {
     if (trackRef.current.length) {
       socket.emit('restore-track', { track: trackRef.current });
     }
+    // An acknowledgement is local state too, and the one piece of it whose
+    // loss is audible: a recovered session starts with acknowledged=false,
+    // so without this the server raises the alarm again on the very next
+    // fix while the boat is still (deliberately) outside its zone.
+    if (acknowledgedRef.current) {
+      socket.emit('acknowledge-alarm');
+    }
   };
 
   const clearOfflineWatch = () => {
@@ -325,9 +332,22 @@ export default function App() {
     socket.emit('join-session', { ...session, deviceId: ensureDeviceId() });
   };
 
+  // The single place the alarm flag changes, and therefore the only place
+  // that can be sure to silence the noise.
+  //
+  // triggerAlarmSequence starts a LOOPING alarm-stream player, a repeating
+  // vibration and an ongoing notification; nothing stops any of them until
+  // AlarmAudio.stop() is called. That used to happen only on an explicit
+  // acknowledgement, so every other way out of the alarm left the phone
+  // sounding for good: the common one is the boat swinging back inside the
+  // zone, which clears `alarmed`, unmounts AlarmNotification — the only UI
+  // carrying the slide-to-silence control — and leaves the tester with a
+  // screaming phone and nothing to tap.
   const setAlarmedState = (value) => {
+    const wasAlarmed = alarmedRef.current;
     alarmedRef.current = value;
     setAlarmed(value);
+    if (wasAlarmed && !value) stopAlarm();
   };
 
   const applyTheme = (next) => {
@@ -562,8 +582,7 @@ export default function App() {
       // watcher; don't let a server snapshot overwrite it either.
       if (!isMain) {
         setLocations(data.locations);
-        alarmedRef.current = data.alarmed;
-        setAlarmed(data.alarmed);
+        setAlarmedState(data.alarmed);
       }
       // A remote joining mid-session gets the whole night at once. The boat
       // phone keeps its own locally recorded track, which is authoritative
@@ -607,17 +626,26 @@ export default function App() {
         ...prev,
         [data.clientId]: data.location
       }));
-      alarmedRef.current = data.alarmed;
-      setAlarmed(data.alarmed);
+      setAlarmedState(data.alarmed);
     });
 
     newSocket.on('alarm-status-changed', (data) => {
       console.log('🚨 Alarm status changed:', data);
-      // Don't re-fire the notification/haptics if the local check on the
-      // boat phone already raised this alarm.
+      // The boat phone decides its own alarm, from its own GPS, in
+      // handleGpsFix — the server's verdict is for the watchers ashore.
+      // Applying it here too let a server that disagreed re-raise an alarm
+      // the skipper had already silenced: session recovery mints a session
+      // with acknowledged=false, so the first fix after a backend restart
+      // came straight back as alarmed=true and the takeover screen and the
+      // siren returned while motoring deliberately out of the anchorage.
+      // pushLocalState re-pushes the acknowledgement so the watchers do not
+      // see a phantom alarm either.
+      if (sessionRef.current?.role === 'main') return;
+
+      // Don't re-fire the notification/haptics if this monitor is already
+      // showing the alarm.
       const alreadyAlarmed = alarmedRef.current;
-      alarmedRef.current = data.alarmed;
-      setAlarmed(data.alarmed);
+      setAlarmedState(data.alarmed);
       if (data.alarmed && !alreadyAlarmed) {
         triggerAlarmSequence();
       }
@@ -949,9 +977,13 @@ export default function App() {
     }
   };
 
-  // Handle zone update
+  // Handle zone update. zoneRef is set here rather than left to the effect
+  // below: it is what the GPS callback evaluates the alarm against, and a
+  // fix arriving between this call and the next render would otherwise be
+  // judged against the zone that has just been replaced.
   const handleZoneUpdate = (newZone) => {
     setZone(newZone);
+    zoneRef.current = newZone;
     if (socket && sessionId) {
       socket.emit('update-zone', { zone: newZone });
     }
@@ -1011,9 +1043,17 @@ export default function App() {
     }
   };
 
-  // Clear anchor (e.g. weighed anchor / repositioning)
+  // Clear anchor (e.g. weighed anchor / repositioning).
+  //
+  // The zone goes with it. The alarm is evaluated against the zone alone —
+  // handleGpsFix never looks at the anchor — while every piece of UI calls
+  // itself "Not armed" the moment the anchor is gone. Leaving the polygon
+  // behind meant the two disagreed: no anchor on the map, a pill reading
+  // "Not armed", a "Drop anchor" button offered, and a live alarm still
+  // waiting on last night's zone to fire as the boat motors out of it.
   const handleClearAnchor = () => {
     setAnchor(null);
+    handleZoneUpdate([]);
     if (socket && sessionId) {
       socket.emit('update-anchor', { anchor: null, resetTrack: true });
     }

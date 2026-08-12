@@ -224,6 +224,36 @@ const touchSession = (session) => {
   markDirty();
 };
 
+// How stale a position is, expressed as elapsed milliseconds rather than as
+// a timestamp.
+//
+// A watcher used to judge freshness by subtracting the boat phone's
+// `timestamp` from its own clock, which silently makes the warning depend on
+// two unrelated devices agreeing about the time. They often do not, and the
+// failure is one-directional and invisible: a boat phone whose clock runs
+// fast produces a negative age, the 30 s and 90 s thresholds are never
+// crossed, and the watcher sits on a green "Watching" pill for the rest of
+// the night over a phone whose GPS died hours ago.
+//
+// An age measured entirely on this machine has no such dependency. The
+// client turns it back into a local arrival time against its own clock, so
+// every comparison from then on happens within a single clock — which is the
+// only kind that is trustworthy. Sending an absolute server timestamp
+// instead would just move the disagreement from boat-vs-watcher to
+// server-vs-watcher.
+const locationsWithAge = (locations, now = Date.now()) => {
+  const out = {};
+  for (const [deviceId, loc] of Object.entries(locations || {})) {
+    if (!loc) continue;
+    const { serverReceivedAt, ...rest } = loc;
+    out[deviceId] = {
+      ...rest,
+      ageMs: Number.isFinite(serverReceivedAt) ? Math.max(0, now - serverReceivedAt) : null
+    };
+  }
+  return out;
+};
+
 // Helper: minimal shape validation for client-supplied coordinates
 const isValidLocation = (loc) =>
   loc &&
@@ -337,6 +367,20 @@ const evictLeastRecentlyActive = () => {
   return oldestId;
 };
 
+// Only the phone that created a session may come back to it as the boat.
+//
+// Resuming a watch means taking over the alarm: GPS, zone, anchor, and the
+// authority to end the session. A session ID is a bearer token shared with
+// everyone watching from shore, so without this any watcher holding the code
+// could rejoin as 'main' and start overwriting the zone the boat is anchored
+// on. The creating device's ID is recorded and checked instead.
+//
+// A session with no owner recorded is claimed by the first device to join it
+// as main. That keeps older clients (which send no deviceId when creating)
+// and sessions restored from a pre-upgrade snapshot working, rather than
+// locking a live boat out of its own watch on deploy day.
+const SESSION_NOT_YOURS = 'Session belongs to another device';
+
 // REST API: Create new session
 app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
   if (sessions.size >= MAX_SESSIONS) evictLeastRecentlyActive();
@@ -346,7 +390,11 @@ app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
   }
 
   const sessionId = generateSessionId();
+  const ownerDeviceId = normalizeDeviceId(req.body && req.body.deviceId);
   sessions.set(sessionId, {
+    // The device allowed to hold this session as the boat phone. Null when
+    // the creator sent none — see SESSION_NOT_YOURS above.
+    ownerDeviceId,
     zone: [],
     // Live positions, keyed by stable device ID (see normalizeDeviceId).
     locations: {},
@@ -384,7 +432,7 @@ app.get('/api/sessions/:sessionId', (req, res) => {
   res.json({
     sessionId,
     zone: session.zone,
-    locations: session.locations,
+    locations: locationsWithAge(session.locations),
     alarmed: session.alarmed,
     anchor: session.anchor
   });
@@ -441,6 +489,25 @@ io.on('connection', (socket) => {
     // one-marker-per-reconnect behaviour until it updates.
     const deviceId = normalizeDeviceId(data && data.deviceId) || socket.id;
 
+    // Taking the session as the boat phone is the privileged move: it owns
+    // the alarm, the zone and the right to end the watch. Only the device
+    // that created the session may do it.
+    if (role === 'main') {
+      if (session.ownerDeviceId && session.ownerDeviceId !== deviceId) {
+        console.warn(
+          `${tag(sessionId, deviceId)} join rejected as main: session belongs to ` +
+            `device ${session.ownerDeviceId}`
+        );
+        socket.emit('error', SESSION_NOT_YOURS);
+        return;
+      }
+      if (!session.ownerDeviceId) {
+        session.ownerDeviceId = deviceId;
+        markDirty();
+        console.log(`${tag(sessionId, deviceId)} claimed as the boat phone`);
+      }
+    }
+
     socket.join(sessionId);
     socket.sessionId = sessionId;
     socket.role = role;
@@ -459,7 +526,10 @@ io.on('connection', (socket) => {
     // 2 a.m. immediately sees the whole night, then appends from track-point.
     socket.emit('state-update', {
       zone: session.zone,
-      locations: session.locations,
+      // A watcher joining at 2 a.m. may be handed a position the boat sent
+      // an hour ago. Without the age it looks as fresh as one that arrived
+      // this second, and the pill reports "Watching" over a dead phone.
+      locations: locationsWithAge(session.locations),
       alarmed: session.alarmed,
       anchor: session.anchor,
       track: session.track
@@ -550,9 +620,10 @@ io.on('connection', (socket) => {
     if (!session || !isValidLocation(location)) return;
 
     // Keyed by device, not by socket: a reconnect updates the same entry
-    // instead of adding a marker.
+    // instead of adding a marker. serverReceivedAt is this machine's clock
+    // and never leaves it — see locationsWithAge.
     const deviceId = socket.deviceId || socket.id;
-    session.locations[deviceId] = location;
+    session.locations[deviceId] = { ...location, serverReceivedAt: Date.now() };
     touchSession(session);
 
     // Thin server-side rather than trusting the client to do it.
@@ -583,6 +654,10 @@ io.on('connection', (socket) => {
       clientId: deviceId,
       deviceId,
       location,
+      // Relayed as it arrives, so by definition no time has passed. Sent
+      // explicitly all the same: the client applies one rule to every
+      // position it receives rather than guessing which ones are live.
+      ageMs: 0,
       alarmed: shouldAlarm
     });
 

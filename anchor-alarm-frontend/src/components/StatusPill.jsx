@@ -1,10 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useT } from '../i18n';
+import { gpsHealth } from '../utils/freshness';
 import './Chrome.css';
-
-const STALE_MS = 30 * 1000;
-const DEAD_MS = 90 * 1000;
-const WEAK_ACCURACY_M = 25;
 
 /**
  * Live monitoring-health pill for the top strip. Worst condition wins:
@@ -37,12 +34,13 @@ export default function StatusPill({ mode, connected, boatLocation, gpsError, ar
     return () => clearInterval(timer);
   }, []);
 
-  const fixAt = boatLocation ? Date.parse(boatLocation.timestamp) : null;
-  const fixAge = fixAt != null && !Number.isNaN(fixAt) ? now - fixAt : null;
+  // Measured against this device's own clock — see utils/freshness.js.
+  const { dead: gpsDead, weak: gpsWeak, ageMs: fixAge } = gpsHealth({
+    location: boatLocation,
+    gpsError,
+    now
+  });
   const accuracy = boatLocation?.accuracy;
-
-  const gpsDead = gpsError != null || fixAge === null || fixAge > DEAD_MS;
-  const gpsWeak = !gpsDead && ((accuracy != null && accuracy > WEAK_ACCURACY_M) || fixAge > STALE_MS);
 
   let state;
   let label;

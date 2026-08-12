@@ -299,9 +299,19 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
         ? 'warn'
         : 'ok';
 
+  // "Updated at" means when this device heard from the boat, so it is read
+  // off the local arrival time rather than the boat's own timestamp — a boat
+  // phone with a skewed clock would otherwise print a time that never
+  // matches the watcher's own watch, and looks like a stuck display.
   const updatedFooter = boatLocation ? (
     <div className="instrument-updated">
-      {t('updatedAt', { time: new Date(boatLocation.timestamp).toLocaleTimeString() })}
+      {t('updatedAt', {
+        time: new Date(
+          Number.isFinite(boatLocation.receivedAt)
+            ? boatLocation.receivedAt
+            : Date.parse(boatLocation.timestamp)
+        ).toLocaleTimeString()
+      })}
     </div>
   ) : null;
 

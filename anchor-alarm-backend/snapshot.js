@@ -63,6 +63,10 @@ function serializeSessions(sessions, now = Date.now()) {
   const out = {};
   for (const [sessionId, session] of sessions.entries()) {
     out[sessionId] = {
+      // Without this a restart would leave every session unowned, and the
+      // next device to join as main — any watcher holding the code — would
+      // claim the boat's watch out from under it.
+      ownerDeviceId: typeof session.ownerDeviceId === 'string' ? session.ownerDeviceId : null,
       zone: Array.isArray(session.zone) ? session.zone : [],
       alarmed: !!session.alarmed,
       acknowledged: !!session.acknowledged,
@@ -112,6 +116,7 @@ function parseSnapshot(raw, { now = Date.now(), idleTtlMs = Infinity } = {}) {
     }
 
     sessions.set(sessionId, {
+      ownerDeviceId: typeof value.ownerDeviceId === 'string' ? value.ownerDeviceId : null,
       zone: Array.isArray(value.zone) ? value.zone.filter(isFinitePair) : [],
       // Every live location belonged to a socket of the previous process.
       locations: {},

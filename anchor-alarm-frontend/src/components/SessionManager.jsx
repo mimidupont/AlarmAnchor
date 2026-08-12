@@ -31,6 +31,9 @@ export default function SessionManager({
   onJoinSession,
   createdSessionId,
   onEnterMap,
+  resumable,
+  onResumeWatch,
+  onForgetWatch,
   initialJoinId,
   lang,
   onToggleLang
@@ -125,6 +128,22 @@ export default function SessionManager({
     <div className="session-manager">
       <div className="session-container">
         <h1>{t('appTitle')}</h1>
+
+        {/* An unfinished watch from this phone. Offered first, and only on
+            the boat phone: the server will only let the device that created
+            a session come back to it as the boat. */}
+        {canCreate && resumable && (
+          <div className="card resume-card">
+            <h2>{t('resumeTitle')}</h2>
+            <p className="card-note">{t('resumeNote')}</p>
+            <button className="card-btn card-btn-primary" onClick={onResumeWatch}>
+              {t('resumeWatch', { id: resumable.sessionId })}
+            </button>
+            <button className="card-btn card-btn-quiet" onClick={onForgetWatch}>
+              {t('resumeDiscard')}
+            </button>
+          </div>
+        )}
 
         {canCreate && (
           <div className="card">

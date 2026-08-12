@@ -337,6 +337,20 @@ const evictLeastRecentlyActive = () => {
   return oldestId;
 };
 
+// Only the phone that created a session may come back to it as the boat.
+//
+// Resuming a watch means taking over the alarm: GPS, zone, anchor, and the
+// authority to end the session. A session ID is a bearer token shared with
+// everyone watching from shore, so without this any watcher holding the code
+// could rejoin as 'main' and start overwriting the zone the boat is anchored
+// on. The creating device's ID is recorded and checked instead.
+//
+// A session with no owner recorded is claimed by the first device to join it
+// as main. That keeps older clients (which send no deviceId when creating)
+// and sessions restored from a pre-upgrade snapshot working, rather than
+// locking a live boat out of its own watch on deploy day.
+const SESSION_NOT_YOURS = 'Session belongs to another device';
+
 // REST API: Create new session
 app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
   if (sessions.size >= MAX_SESSIONS) evictLeastRecentlyActive();
@@ -346,7 +360,11 @@ app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
   }
 
   const sessionId = generateSessionId();
+  const ownerDeviceId = normalizeDeviceId(req.body && req.body.deviceId);
   sessions.set(sessionId, {
+    // The device allowed to hold this session as the boat phone. Null when
+    // the creator sent none — see SESSION_NOT_YOURS above.
+    ownerDeviceId,
     zone: [],
     // Live positions, keyed by stable device ID (see normalizeDeviceId).
     locations: {},
@@ -440,6 +458,25 @@ io.on('connection', (socket) => {
     // client from an older build working — it just gets the old
     // one-marker-per-reconnect behaviour until it updates.
     const deviceId = normalizeDeviceId(data && data.deviceId) || socket.id;
+
+    // Taking the session as the boat phone is the privileged move: it owns
+    // the alarm, the zone and the right to end the watch. Only the device
+    // that created the session may do it.
+    if (role === 'main') {
+      if (session.ownerDeviceId && session.ownerDeviceId !== deviceId) {
+        console.warn(
+          `${tag(sessionId, deviceId)} join rejected as main: session belongs to ` +
+            `device ${session.ownerDeviceId}`
+        );
+        socket.emit('error', SESSION_NOT_YOURS);
+        return;
+      }
+      if (!session.ownerDeviceId) {
+        session.ownerDeviceId = deviceId;
+        markDirty();
+        console.log(`${tag(sessionId, deviceId)} claimed as the boat phone`);
+      }
+    }
 
     socket.join(sessionId);
     socket.sessionId = sessionId;

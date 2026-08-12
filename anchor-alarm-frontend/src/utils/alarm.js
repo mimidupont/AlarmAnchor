@@ -44,8 +44,17 @@ export function decideAlarm({ latitude, longitude, zone, alarmed, acknowledged }
 //              stop GPS, leave the map, or clear the anchor or zone. The
 //              server is a relay for remote watchers, nothing more. So on
 //              a lost session it re-mints one and re-pushes local state.
+// Must match the strings server.js emits.
+export const SESSION_NOT_FOUND = 'Session not found';
+export const SESSION_NOT_YOURS = 'Session belongs to another device';
+
 export function sessionErrorAction(role, errorMsg) {
-  if (errorMsg !== 'Session not found') return 'none';
+  // Someone tried to resume a watch belonging to another phone. Never
+  // recover from this: minting a replacement session would quietly hand
+  // them a boat watch on a device that is not on the boat. Forget the
+  // stored watch and go back to the picker.
+  if (errorMsg === SESSION_NOT_YOURS) return 'disown';
+  if (errorMsg !== SESSION_NOT_FOUND) return 'none';
   return role === 'main' ? 'recover' : 'reset';
 }
 

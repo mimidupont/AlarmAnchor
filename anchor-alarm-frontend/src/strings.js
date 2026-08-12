@@ -12,6 +12,10 @@ export const strings = {
     watchRemotely: '👀 Watch remotely',
     watchRemotelyNote: 'Join a session running on the boat',
     createInAppNote: 'To start a session, use the Anchor Alarm app on the boat phone.',
+    resumeTitle: '⚠️ Watch left running',
+    resumeNote: 'This phone started a watch and never ended it. Resuming keeps the same session, so anyone already watching stays connected.',
+    resumeWatch: 'Resume {id}',
+    resumeDiscard: 'Discard it',
     sessionIdPlaceholder: 'Session ID',
     join: 'Join',
     scanQr: 'Scan QR',
@@ -143,6 +147,7 @@ export const strings = {
     errUnreachable: "Can't reach the server ({msg}). Check your connection and try again.",
     errLocPermission: 'Location permission was not granted',
     errDropAnchor: 'Could not set the anchor position: {msg}',
+    errNotYourSession: 'That watch belongs to another phone. Only the phone that started a session can take it back over.',
   },
 
   fr: {
@@ -155,6 +160,10 @@ export const strings = {
     watchRemotelyNote: 'Rejoindre une session en cours sur le bateau',
     createInAppNote:
       "Pour démarrer une session, utilisez l'application Anchor Alarm sur le téléphone du bateau.",
+    resumeTitle: '⚠️ Veille restée active',
+    resumeNote: "Ce téléphone a démarré une veille sans jamais la terminer. La reprendre conserve la même session : les personnes qui surveillent restent connectées.",
+    resumeWatch: 'Reprendre {id}',
+    resumeDiscard: "L'abandonner",
     sessionIdPlaceholder: 'ID de session',
     join: 'Rejoindre',
     scanQr: 'Scanner le QR',
@@ -277,5 +286,6 @@ export const strings = {
     errUnreachable: 'Serveur injoignable ({msg}). Vérifiez votre connexion et réessayez.',
     errLocPermission: 'Permission de localisation refusée',
     errDropAnchor: "Impossible de définir la position de l'ancre : {msg}",
+    errNotYourSession: "Cette veille appartient à un autre téléphone. Seul le téléphone qui a créé la session peut la reprendre.",
   }
 };

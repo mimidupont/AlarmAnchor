@@ -29,6 +29,7 @@ import {
 } from './utils/alarm';
 import { ensureDeviceId, initDeviceId } from './utils/deviceId';
 import { urlWithoutJoinParam } from './utils/joinLink';
+import { forgetWatch, loadWatch, pruneOrphanTracks, saveWatch } from './utils/watch';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -108,6 +109,11 @@ export default function App() {
   // Session just created on this (boat) phone: the session screen shows
   // the share step (ID chip + QR) until the user opens the map.
   const [createdSessionId, setCreatedSessionId] = useState(null);
+  // A watch this phone started and never ended — an OS kill, a crash, a flat
+  // battery. Read once at startup so the session screen can offer to resume
+  // it; the server only lets the device that created a session come back to
+  // it as the boat.
+  const [resumable, setResumable] = useState(() => loadWatch());
   // ?join=<ID> in the URL (from a scanned QR): auto-join as remote once
   // the socket connects. Consumed exactly once.
   const joinParamRef = useRef(
@@ -186,6 +192,14 @@ export default function App() {
   useEffect(() => {
     anchorRef.current = anchor;
   }, [anchor]);
+
+  // Keep the resumable record in step with the live watch. The zone and the
+  // anchor are what make a resumed session armed rather than merely open, so
+  // they are written whenever they change rather than only at startup.
+  useEffect(() => {
+    if (!sessionId || sessionRef.current?.role !== 'main') return;
+    saveWatch({ sessionId, zone, anchor });
+  }, [sessionId, zone, anchor]);
 
   const t = useMemo(() => makeT(lang), [lang]);
   // Long-lived callbacks (socket handlers, GPS watcher) read the current
@@ -416,7 +430,14 @@ export default function App() {
     try {
       // ?recovery=1 is purely diagnostic: it lets a post-mortem tell a
       // recovery mint apart from a tester creating a session by hand.
-      const response = await fetch(`${BACKEND_URL}/api/sessions?recovery=1`, { method: 'POST' });
+      // The device ID travels with the create: it is what the server
+      // records as the session's owner, and therefore what lets this phone
+      // — and only this phone — come back to the watch later.
+      const response = await fetch(`${BACKEND_URL}/api/sessions?recovery=1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: ensureDeviceId() })
+      });
       if (!response.ok) throw new Error(`Server responded with ${response.status}`);
       const data = await response.json();
       if (!data?.sessionId) throw new Error('No session ID returned');
@@ -435,6 +456,9 @@ export default function App() {
       // must not suddenly be given one.
       setCreatedSessionId((current) => (current ? data.sessionId : current));
       retargetTrackStorage(previousId, data.sessionId);
+      // The resumable record follows the new ID too, or an app restart after
+      // a recovery would offer to resume a session the server has forgotten.
+      saveWatch({ sessionId: data.sessionId, zone: zoneRef.current, anchor: anchorRef.current });
 
       const socket = socketRef.current;
       if (socket) {
@@ -545,6 +569,21 @@ export default function App() {
         // in the background instead, and stay silent about it: the red
         // error banner would be alarming and is not actionable.
         recoverSession();
+        return;
+      }
+
+      // Tried to resume a watch that belongs to another phone. Say so in
+      // those terms — "connection error" would send a tester hunting a
+      // network fault that isn't there — and drop the stored watch so the
+      // session screen stops offering it.
+      if (action === 'disown') {
+        setError(tRef.current('errNotYourSession'));
+        forgetWatch();
+        setResumable(null);
+        sessionRef.current = null;
+        stopGpsTracking();
+        setView('session');
+        setSessionId(null);
         return;
       }
 
@@ -796,6 +835,37 @@ export default function App() {
     }
   };
 
+  // Resume a watch this phone started before it was killed.
+  //
+  // The zone and anchor are restored from local storage BEFORE joining, so
+  // the state-update the server answers with cannot overwrite them: the
+  // boat phone is authoritative, and if the server has since dropped the
+  // session its copy is empty anyway. That ordering is what makes a resumed
+  // watch come back armed instead of merely open.
+  const handleResumeWatch = () => {
+    if (!resumable) return;
+    const { sessionId: id, zone: savedZone, anchor: savedAnchor } = resumable;
+
+    setZone(savedZone);
+    zoneRef.current = savedZone;
+    setAnchor(savedAnchor);
+    anchorRef.current = savedAnchor;
+    pruneOrphanTracks(id);
+
+    handleJoinSession(id, 'main');
+
+    // Push it straight back up. On a session the server still holds this is
+    // idempotent; on one it has forgotten, the 'Session not found' path
+    // mints a replacement and pushes the same state into that instead.
+    pushLocalState(socketRef.current);
+  };
+
+  const handleForgetWatch = () => {
+    forgetWatch();
+    pruneOrphanTracks(null);
+    setResumable(null);
+  };
+
   // Handle session creation
   const handleCreateSession = async () => {
     // Prime geolocation permission (must be in user gesture)
@@ -820,12 +890,18 @@ export default function App() {
     // Create session
     try {
       const response = await fetch(`${BACKEND_URL}/api/sessions`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: ensureDeviceId() })
       });
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}`);
       }
       const data = await response.json();
+      // A new watch supersedes any older one, and its track blobs with it.
+      saveWatch({ sessionId: data.sessionId, zone: [], anchor: null });
+      setResumable(null);
+      pruneOrphanTracks(data.sessionId);
       // Join + start tracking right away, but stay on the session screen:
       // it shows the share step (ID + QR) until "Open the map".
       setSessionId(data.sessionId);
@@ -1121,6 +1197,12 @@ export default function App() {
     }
     stopGpsTracking();
     stopAlarm();
+    // Ending the watch on purpose is the one case there is nothing to
+    // resume. A crash or an OS kill leaves the record in place, which is
+    // exactly the difference this is drawing.
+    forgetWatch();
+    pruneOrphanTracks(null);
+    setResumable(null);
     resetSessionState();
   };
 
@@ -1292,6 +1374,9 @@ export default function App() {
           onJoinSession={handleJoinSession}
           createdSessionId={createdSessionId}
           onEnterMap={() => setView('main')}
+          resumable={resumable}
+          onResumeWatch={handleResumeWatch}
+          onForgetWatch={handleForgetWatch}
           initialJoinId={joinParamRef.current || ''}
           lang={lang}
           onToggleLang={toggleLang}

@@ -37,6 +37,12 @@ alarm still fires. Everything else in this repo exists to serve that.
   deliberately.
 - **Survives restarts** — sessions are snapshotted to disk, so a deploy or a
   host migration is not the end of the night's watch.
+- **Resume a watch** — if the boat phone is killed (Android, a flat battery, a
+  crash) it offers to resume the same session on relaunch, coming back armed
+  with the zone and anchor it had, so the watchers ashore are never stranded
+  on a dead code. Only the phone that created a session may take it back —
+  the session ID is shared with everyone watching, so it cannot be the thing
+  that proves ownership.
 
 ## 🚀 Running it locally
 
@@ -72,8 +78,8 @@ for the APK.
 ## 🧪 Tests
 
 ```bash
-cd anchor-alarm-backend  && npm test    # 83 tests
-cd anchor-alarm-frontend && npm test    # 74 tests
+cd anchor-alarm-backend  && npm test    # 90 tests
+cd anchor-alarm-frontend && npm test    # 82 tests
 ```
 
 The backend suite spawns real server processes rather than requiring the
@@ -100,7 +106,7 @@ anchor-alarm-backend/          Node + Express + Socket.io relay
   snapshot.js                  crash-safe session persistence
   server-harness.js            spawns real servers for the tests
   *.test.js                    snapshot, restart, abuse, CORS, geofence,
-                               end-session, reconnect-sync
+                               end-session, reconnect-sync, ownership
   scripts/load-sim.js          20-boat load simulation
   fly.toml, Dockerfile         deployment (single always-on machine)
 
@@ -156,7 +162,7 @@ client just applies — `state-update`, `location-updated`, `zone-updated`,
 
 | Event | From | Meaning |
 | --- | --- | --- |
-| `join-session` | both | join, and receive the current state |
+| `join-session` | both | join, and receive the current state. Joining as `main` is refused unless the device ID matches the one that created the session |
 | `update-location` | main | a GPS fix; the server thins it into the track |
 | `update-zone` / `update-anchor` | main | the zone or anchor changed |
 | `restore-track` | main | bulk-restore a locally held track |
@@ -203,7 +209,9 @@ There is no route for `/` — a bare visit to the backend returning
 
 ## 🔒 Security
 
-No authentication: anyone with a session ID can watch that boat. Session IDs
+No authentication: anyone with a session ID can watch that boat. Watching is
+all it buys them — taking the session over as the boat phone is refused
+unless the device ID matches the one that created it. Session IDs
 are 9 characters from a 32-character unambiguous alphabet (no `I`, `O`, `0`,
 `1`), crypto-random, so guessing is impractical — but they are the only thing
 protecting a session.

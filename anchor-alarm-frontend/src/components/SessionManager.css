@@ -72,6 +72,24 @@
   color: #ffffff;
 }
 
+/* Secondary action inside a card — "discard the unfinished watch". Quiet on
+   purpose: it is the destructive one, and it sits directly under the button
+   the user almost always wants. */
+.card-btn-quiet {
+  min-height: 40px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 14px;
+}
+
+/* The unfinished watch is the first thing on the screen and needs to read as
+   unfinished business, not as a third equal option. */
+.resume-card {
+  border-color: var(--warn);
+}
+
 .session-input {
   min-height: 48px;
   padding: 0 14px;

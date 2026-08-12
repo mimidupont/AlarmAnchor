@@ -224,6 +224,36 @@ const touchSession = (session) => {
   markDirty();
 };
 
+// How stale a position is, expressed as elapsed milliseconds rather than as
+// a timestamp.
+//
+// A watcher used to judge freshness by subtracting the boat phone's
+// `timestamp` from its own clock, which silently makes the warning depend on
+// two unrelated devices agreeing about the time. They often do not, and the
+// failure is one-directional and invisible: a boat phone whose clock runs
+// fast produces a negative age, the 30 s and 90 s thresholds are never
+// crossed, and the watcher sits on a green "Watching" pill for the rest of
+// the night over a phone whose GPS died hours ago.
+//
+// An age measured entirely on this machine has no such dependency. The
+// client turns it back into a local arrival time against its own clock, so
+// every comparison from then on happens within a single clock — which is the
+// only kind that is trustworthy. Sending an absolute server timestamp
+// instead would just move the disagreement from boat-vs-watcher to
+// server-vs-watcher.
+const locationsWithAge = (locations, now = Date.now()) => {
+  const out = {};
+  for (const [deviceId, loc] of Object.entries(locations || {})) {
+    if (!loc) continue;
+    const { serverReceivedAt, ...rest } = loc;
+    out[deviceId] = {
+      ...rest,
+      ageMs: Number.isFinite(serverReceivedAt) ? Math.max(0, now - serverReceivedAt) : null
+    };
+  }
+  return out;
+};
+
 // Helper: minimal shape validation for client-supplied coordinates
 const isValidLocation = (loc) =>
   loc &&
@@ -402,7 +432,7 @@ app.get('/api/sessions/:sessionId', (req, res) => {
   res.json({
     sessionId,
     zone: session.zone,
-    locations: session.locations,
+    locations: locationsWithAge(session.locations),
     alarmed: session.alarmed,
     anchor: session.anchor
   });
@@ -496,7 +526,10 @@ io.on('connection', (socket) => {
     // 2 a.m. immediately sees the whole night, then appends from track-point.
     socket.emit('state-update', {
       zone: session.zone,
-      locations: session.locations,
+      // A watcher joining at 2 a.m. may be handed a position the boat sent
+      // an hour ago. Without the age it looks as fresh as one that arrived
+      // this second, and the pill reports "Watching" over a dead phone.
+      locations: locationsWithAge(session.locations),
       alarmed: session.alarmed,
       anchor: session.anchor,
       track: session.track
@@ -587,9 +620,10 @@ io.on('connection', (socket) => {
     if (!session || !isValidLocation(location)) return;
 
     // Keyed by device, not by socket: a reconnect updates the same entry
-    // instead of adding a marker.
+    // instead of adding a marker. serverReceivedAt is this machine's clock
+    // and never leaves it — see locationsWithAge.
     const deviceId = socket.deviceId || socket.id;
-    session.locations[deviceId] = location;
+    session.locations[deviceId] = { ...location, serverReceivedAt: Date.now() };
     touchSession(session);
 
     // Thin server-side rather than trusting the client to do it.
@@ -620,6 +654,10 @@ io.on('connection', (socket) => {
       clientId: deviceId,
       deviceId,
       location,
+      // Relayed as it arrives, so by definition no time has passed. Sent
+      // explicitly all the same: the client applies one rule to every
+      // position it receives rather than guessing which ones are live.
+      ageMs: 0,
       alarmed: shouldAlarm
     });
 

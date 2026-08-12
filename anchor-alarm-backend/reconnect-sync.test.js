@@ -207,6 +207,110 @@ describe('the boat phone reconnecting after an outage', () => {
   });
 });
 
+describe('telling watchers how old a position is', () => {
+  // A watcher cannot measure staleness by subtracting the boat phone's
+  // timestamp from its own clock — that quietly makes the "boat has gone
+  // quiet" warning depend on two unrelated devices agreeing about the time.
+  // A boat clock running fast produces a negative age, no threshold is ever
+  // crossed, and the watcher is shown a healthy pill over a dead phone. The
+  // server therefore reports an ELAPSED age measured on its own clock, which
+  // the client rebases onto its own.
+
+  it('reports a live relay as zero seconds old', async () => {
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    const watcher = await connect(server.base);
+    await joinSession(watcher, sessionId, 'remote', 'device-watcher');
+    await delay(200);
+
+    const update = waitFor(watcher, 'location-updated', 4000);
+    boat.emit('update-location', { location: fix(LAT, LNG) });
+    const seen = await update;
+
+    assert.ok(seen, 'the watcher must receive the position');
+    assert.equal(seen.ageMs, 0, 'a position relayed as it arrives is not stale');
+
+    boat.close();
+    watcher.close();
+  });
+
+  it('tells a watcher joining later how long ago the boat last reported', async () => {
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    // The boat's SOCKET stays up — a phone wedged in a bag, a revoked
+    // location permission, a watcher that quietly died. This is the case
+    // the age exists for: a dropped socket deletes the position outright
+    // and emits boat-offline, which the watcher already handles.
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    boat.emit('update-location', { location: fix(LAT, LNG) });
+    await delay(2000);
+
+    // Arrives well after the boat's GPS went quiet.
+    const watcher = await connect(server.base);
+    const state = await joinSession(watcher, sessionId, 'remote', 'device-late');
+    const boatPos = Object.values(state.locations)[0];
+
+    assert.ok(boatPos, 'the last known position must still be handed over');
+    assert.ok(
+      Number.isFinite(boatPos.ageMs) && boatPos.ageMs >= 1000,
+      `it must come with its age, got ${boatPos && boatPos.ageMs}`
+    );
+
+    boat.close();
+    watcher.close();
+  });
+
+  it('measures the age on its own clock, not the boat phone\'s', async () => {
+    // The boat sends a timestamp an hour in the future — a phone whose clock
+    // is simply wrong. The age the server reports must be unaffected.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    boat.emit('update-location', {
+      location: fix(LAT, LNG, { timestamp: new Date(Date.now() + 3600_000).toISOString() })
+    });
+    await delay(2000);
+
+    const watcher = await connect(server.base);
+    const state = await joinSession(watcher, sessionId, 'remote', 'device-late');
+    const boatPos = Object.values(state.locations)[0];
+
+    assert.ok(
+      boatPos.ageMs >= 1000 && boatPos.ageMs < 60_000,
+      `age must come from the server's clock, got ${boatPos.ageMs} ms`
+    );
+
+    boat.close();
+    watcher.close();
+  });
+
+  it('never leaks the server\'s own absolute clock', async () => {
+    // Sending an instant instead of a duration would just move the
+    // disagreement from boat-vs-watcher to server-vs-watcher.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    boat.emit('update-location', { location: fix(LAT, LNG) });
+    await delay(400);
+
+    const body = await (await fetch(`${server.base}/api/sessions/${sessionId}`)).json();
+    const boatPos = Object.values(body.locations)[0];
+    assert.equal(boatPos.serverReceivedAt, undefined, 'internal receive instant must not ship');
+    assert.ok(Number.isFinite(boatPos.ageMs), 'an elapsed age ships instead');
+
+    boat.close();
+  });
+});
+
 describe('an alarm the skipper already silenced', () => {
   // Session recovery mints a brand-new session, and a new session has
   // acknowledged=false. The boat is still outside its zone — that is the

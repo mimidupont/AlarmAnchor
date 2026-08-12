@@ -78,8 +78,8 @@ for the APK.
 ## 🧪 Tests
 
 ```bash
-cd anchor-alarm-backend  && npm test    # 90 tests
-cd anchor-alarm-frontend && npm test    # 82 tests
+cd anchor-alarm-backend  && npm test    # 94 tests
+cd anchor-alarm-frontend && npm test    # 97 tests
 ```
 
 The backend suite spawns real server processes rather than requiring the
@@ -163,7 +163,7 @@ client just applies — `state-update`, `location-updated`, `zone-updated`,
 | Event | From | Meaning |
 | --- | --- | --- |
 | `join-session` | both | join, and receive the current state. Joining as `main` is refused unless the device ID matches the one that created the session |
-| `update-location` | main | a GPS fix; the server thins it into the track |
+| `update-location` | main | a GPS fix; the server thins it into the track. Relayed back with `ageMs`, an elapsed age measured on the server's clock, so watchers never subtract one device's clock from another's |
 | `update-zone` / `update-anchor` | main | the zone or anchor changed |
 | `restore-track` | main | bulk-restore a locally held track |
 | `acknowledge-alarm` | both | silence until the boat re-enters the zone |
@@ -232,6 +232,7 @@ real database.
 | Website is blank, incognito works | A stale service worker on that device. Refresh two or three times; it now unregisters itself. |
 | Remote works in the app but not in a browser | CORS. `fly logs` prints `[cors] rejected origin …` with the exact hostname. |
 | Alarm doesn't sound on silent | Check the alarm *stream* volume, and whether DND is allowing alarms. |
+| Remote monitor's pill looks wrong for the data it is showing | Should no longer happen: freshness is measured from an elapsed age, not from the boat phone's clock. If it recurs, check the console for an `ageMs` of `null` — that means an old backend. |
 | QR scanner opens and closes instantly | Camera permission refused for the app. |
 | Backend won't start | Port 5000 in use — `PORT=5001 npm start`. |
 | `Cannot GET /` on the backend URL | Expected. Use `/health`. |

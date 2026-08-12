@@ -30,6 +30,7 @@ import {
 import { ensureDeviceId, initDeviceId } from './utils/deviceId';
 import { urlWithoutJoinParam } from './utils/joinLink';
 import { forgetWatch, loadWatch, pruneOrphanTracks, saveWatch } from './utils/watch';
+import { stampAllReceivedAt, stampReceivedAt } from './utils/freshness';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -620,7 +621,10 @@ export default function App() {
       // The map on the boat phone is driven directly by the local GPS
       // watcher; don't let a server snapshot overwrite it either.
       if (!isMain) {
-        setLocations(data.locations);
+        // Convert each position's server-measured age into an arrival time on
+        // this device's clock, right now while "now" still means the moment
+        // it arrived. Everything downstream then compares like with like.
+        setLocations(stampAllReceivedAt(data.locations));
         setAlarmedState(data.alarmed);
       }
       // A remote joining mid-session gets the whole night at once. The boat
@@ -663,7 +667,7 @@ export default function App() {
       if (sessionRef.current?.role === 'main') return;
       setLocations(prev => ({
         ...prev,
-        [data.clientId]: data.location
+        [data.clientId]: stampReceivedAt(data.location, data.ageMs)
       }));
       setAlarmedState(data.alarmed);
     });
@@ -929,7 +933,10 @@ export default function App() {
     setGpsError(null);
 
     // Drive the map/status directly from the local fix (no server echo).
-    setLocations({ boat: location });
+    // Carries receivedAt like a relayed one does, so the status pill applies
+    // one rule everywhere — and on this phone the clock it is measured
+    // against is the same clock that wrote it, which is always correct.
+    setLocations({ boat: { ...location, receivedAt: Date.now() } });
 
     // Local alarm decision, mirroring the server's state machine: alarm
     // when outside the zone, stay silent after an acknowledgment, re-arm

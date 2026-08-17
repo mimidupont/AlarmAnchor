@@ -78,7 +78,7 @@ for the APK.
 ## 🧪 Tests
 
 ```bash
-cd anchor-alarm-backend  && npm test    # 94 tests
+cd anchor-alarm-backend  && npm test    # 97 tests
 cd anchor-alarm-frontend && npm test    # 97 tests
 ```
 
@@ -163,10 +163,10 @@ client just applies — `state-update`, `location-updated`, `zone-updated`,
 | Event | From | Meaning |
 | --- | --- | --- |
 | `join-session` | both | join, and receive the current state. Joining as `main` is refused unless the device ID matches the one that created the session |
-| `update-location` | main | a GPS fix; the server thins it into the track. Relayed back with `ageMs`, an elapsed age measured on the server's clock, so watchers never subtract one device's clock from another's |
-| `update-zone` / `update-anchor` | main | the zone or anchor changed |
-| `restore-track` | main | bulk-restore a locally held track |
-| `acknowledge-alarm` | both | silence until the boat re-enters the zone |
+| `update-location` | main only | a GPS fix; the server thins it into the track. Relayed back with `ageMs`, an elapsed age measured on the server's clock, so watchers never subtract one device's clock from another's |
+| `update-zone` / `update-anchor` | main only | the zone or anchor changed |
+| `restore-track` | main only | bulk-restore a locally held track |
+| `acknowledge-alarm` | main only | silence session-wide until the boat re-enters the zone. A watcher silencing its own device does not send this — it quiets that screen locally and the boat goes on sounding |
 | `end-session` | main only | the watch is over; session deleted |
 | `boat-offline` / `boat-online` | server | the boat phone's socket dropped / came back |
 | `session-ended` | server | the boat phone ended the watch |
@@ -216,13 +216,28 @@ are 9 characters from a 32-character unambiguous alphabet (no `I`, `O`, `0`,
 `1`), crypto-random, so guessing is impractical — but they are the only thing
 protecting a session.
 
+**Every event that changes a watch is boat-phone only** — `update-zone`,
+`update-anchor`, `update-location`, `restore-track`, `acknowledge-alarm`,
+`end-session` — and joining as the boat phone requires the device ID that
+created the session. Before that guard existed, anyone holding a code could
+join as an ordinary watcher and erase the zone, which the boat phone applies
+unconditionally and evaluates its alarm against: a remote kill switch for the
+alarm. They could also forge a position (telling every watcher ashore the
+alarm had cleared while the boat dragged), silence a live alarm, move the
+anchor and wipe the track. All were confirmed working against a running
+instance, and all are refused now.
+
 Already in place: a browser origin allow-list, rate limiting on session
 creation (30/hour/IP) and on socket join attempts, payload validation and
 size caps, and a session cap with least-recently-active eviction.
 
 Not in place, and would be needed for anything beyond a friendly beta:
 user accounts, authorisation on join, encryption of stored positions, and a
-real database.
+real database. Two known soft spots: the `alarm-anchor-*.vercel.app` origin
+pattern matches any Vercel project named that way, not only ours (low impact
+— there are no cookies to steal cross-origin); and `GET /api/sessions/:id`
+is not rate limited, which does not help guessing a 32^9 keyspace but is a
+free scanning surface.
 
 ## 🐛 Troubleshooting
 

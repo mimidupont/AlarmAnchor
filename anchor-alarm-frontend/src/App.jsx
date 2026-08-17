@@ -365,6 +365,26 @@ export default function App() {
     if (wasAlarmed && !value) stopAlarm();
   };
 
+  // How a remote monitor applies the server's alarm verdict.
+  //
+  // A watcher who has silenced their own device must STAY silent for the rest
+  // of that alarm — otherwise the next location update, which carries the
+  // still-true alarm flag, puts the full-screen takeover straight back up.
+  // But it must warn again on a NEW alarm, so the suppression is cleared the
+  // moment the server says the alarm is over.
+  //
+  // The boat phone never comes through here: it decides locally in
+  // handleGpsFix, and its acknowledgement is the session-wide one.
+  const applyRemoteAlarm = (alarmedNow) => {
+    if (!alarmedNow) {
+      acknowledgedRef.current = false;
+      setAlarmedState(false);
+      return;
+    }
+    if (acknowledgedRef.current) return;
+    setAlarmedState(true);
+  };
+
   const applyTheme = (next) => {
     setTheme(next);
     try {
@@ -625,7 +645,7 @@ export default function App() {
         // this device's clock, right now while "now" still means the moment
         // it arrived. Everything downstream then compares like with like.
         setLocations(stampAllReceivedAt(data.locations));
-        setAlarmedState(data.alarmed);
+        applyRemoteAlarm(data.alarmed);
       }
       // A remote joining mid-session gets the whole night at once. The boat
       // phone keeps its own locally recorded track, which is authoritative
@@ -669,7 +689,7 @@ export default function App() {
         ...prev,
         [data.clientId]: stampReceivedAt(data.location, data.ageMs)
       }));
-      setAlarmedState(data.alarmed);
+      applyRemoteAlarm(data.alarmed);
     });
 
     newSocket.on('alarm-status-changed', (data) => {
@@ -686,10 +706,11 @@ export default function App() {
       if (sessionRef.current?.role === 'main') return;
 
       // Don't re-fire the notification/haptics if this monitor is already
-      // showing the alarm.
+      // showing the alarm — nor if this watcher has silenced their own
+      // device, which applyRemoteAlarm signals by leaving alarmedRef false.
       const alreadyAlarmed = alarmedRef.current;
-      setAlarmedState(data.alarmed);
-      if (data.alarmed && !alreadyAlarmed) {
+      applyRemoteAlarm(data.alarmed);
+      if (data.alarmed && !alreadyAlarmed && alarmedRef.current) {
         triggerAlarmSequence();
       }
     });
@@ -1153,14 +1174,23 @@ export default function App() {
     }
   };
 
-  // Acknowledge alarm: silence it locally right away (works offline) and
-  // tell the server so other devices are silenced too. The local state
-  // machine re-arms once the boat is back inside the zone.
+  // Acknowledge alarm: silence it locally right away (works offline).
+  //
+  // Only the boat phone tells the server. A session-wide acknowledgement
+  // suppresses the alarm until the boat re-enters its zone, and the session
+  // code is shared with everyone watching — so from a watcher that was a way
+  // to silence a real dragging alarm on a boat they are nowhere near.
+  //
+  // A watcher silencing their own screen is still useful and still works: it
+  // quiets this device and stays quiet for as long as this alarm lasts, while
+  // the boat goes on sounding for the people aboard. applyRemoteAlarm is what
+  // keeps it quiet without letting a later location update flip the takeover
+  // screen back on.
   const handleAcknowledgeAlarm = () => {
     acknowledgedRef.current = true;
     setAlarmedState(false);
     stopAlarm();
-    if (socket && sessionId) {
+    if (socket && sessionId && sessionRef.current?.role === 'main') {
       socket.emit('acknowledge-alarm');
     }
   };

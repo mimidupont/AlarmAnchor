@@ -266,10 +266,17 @@ const isValidLocation = (loc) =>
 // the call site; anything oversized is rejected rather than truncated, so a
 // hostile client cannot bloat the session map with near-identical keys.
 const DEVICE_ID_MAX_LENGTH = 64;
+// Device IDs are used directly as object keys in session.locations and
+// session.deviceSockets, so the three names that mean something to an object
+// are refused. Writing a position under '__proto__' replaces that object's
+// prototype — contained to the one object rather than Object.prototype, so
+// this is hardening rather than a hole, but there is no reason to allow it.
+const RESERVED_DEVICE_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 const normalizeDeviceId = (value) => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > DEVICE_ID_MAX_LENGTH) return null;
+  if (RESERVED_DEVICE_IDS.has(trimmed)) return null;
   return trimmed;
 };
 
@@ -438,6 +445,38 @@ app.get('/api/sessions/:sessionId', (req, res) => {
   });
 });
 
+// Only the boat phone may change the watch.
+//
+// A session ID is a bearer token: it is printed on every watcher's screen,
+// encoded in a QR meant to be photographed, and given to everyone invited to
+// watch. So "knows the code" cannot be the test for who may mutate the
+// session — and until this guard existed, it was. Anyone holding a code could
+// join as an ordinary 'remote' and then:
+//
+//   update-zone {zone: []}  — erase the zone. The boat phone applies
+//                             zone-updated unconditionally and evaluates its
+//                             alarm against exactly that zone, so this is a
+//                             remote kill switch for the alarm. Verified
+//                             against a running app: boat 220 m off its
+//                             anchor, nothing sounding.
+//   update-location         — forge a position. The server geofences whatever
+//                             it is sent and the resulting flag is
+//                             session-wide, so a fake fix inside the zone
+//                             tells every watcher ashore the alarm cleared
+//                             while the boat is genuinely dragging.
+//   update-anchor           — move the anchor, and wipe the night's track.
+//
+// Refused, logged, and otherwise ignored: a hostile client gets no signal and
+// an honest one has no reason to send these at all.
+const requireBoat = (socket, event) => {
+  if (socket.role === 'main') return true;
+  console.warn(
+    `${tag(socket.sessionId, socket.deviceId)} ignored ${event} from role ` +
+      `${socket.role || 'unknown'} — only the boat phone may change the watch`
+  );
+  return false;
+};
+
 // Per-socket join budget — see the join-session handler.
 const JOIN_ATTEMPT_LIMIT = 20;
 const JOIN_ATTEMPT_WINDOW_MS = 60 * 1000;
@@ -555,6 +594,8 @@ io.on('connection', (socket) => {
     // socket handler — it reaches the uncaughtException handler below,
     // which exits the process. One malformed client would take the relay
     // down for every boat on the machine.
+    if (!requireBoat(socket, 'update-zone')) return;
+
     const { zone } = data || {};
     const session = sessions.get(socket.sessionId);
 
@@ -568,6 +609,8 @@ io.on('connection', (socket) => {
   // Update anchor position (from main app). anchor is either
   // { latitude, longitude, accuracy, timestamp } or null to clear it.
   socket.on('update-anchor', (data) => {
+    if (!requireBoat(socket, 'update-anchor')) return;
+
     const { anchor, resetTrack } = data || {};
     const session = sessions.get(socket.sessionId);
 
@@ -591,6 +634,8 @@ io.on('connection', (socket) => {
   // which is authoritative. Only ever accepted into an empty track, so a
   // stray client cannot overwrite a session's real history.
   socket.on('restore-track', (data) => {
+    if (!requireBoat(socket, 'restore-track')) return;
+
     const session = sessions.get(socket.sessionId);
     if (!session || session.track.length > 0) return;
     if (!data || !Array.isArray(data.track)) return;
@@ -614,6 +659,8 @@ io.on('connection', (socket) => {
 
   // Update location (from main app)
   socket.on('update-location', (data) => {
+    if (!requireBoat(socket, 'update-location')) return;
+
     const { location } = data || {};
     const session = sessions.get(socket.sessionId);
 
@@ -688,13 +735,7 @@ io.on('connection', (socket) => {
 
     // Only the boat phone owns the watch. A remote closing its tab must
     // never end monitoring for the boat or for anyone else watching.
-    if (socket.role !== 'main') {
-      console.warn(
-        `${tag(sessionId, socket.deviceId)} ignored end-session from role ` +
-          `${socket.role || 'unknown'} — only the boat phone may end a session`
-      );
-      return;
-    }
+    if (!requireBoat(socket, 'end-session')) return;
 
     console.log(`${tag(sessionId, socket.deviceId)} session ended by the boat phone`);
     io.to(sessionId).emit('session-ended', { endedAt: new Date().toISOString() });
@@ -702,8 +743,17 @@ io.on('connection', (socket) => {
     markDirty();
   });
 
-  // Acknowledge alarm (reset after notification)
+  // Acknowledge alarm (reset after notification).
+  //
+  // Boat phone only. This suppresses the alarm for the whole session until
+  // the boat re-enters its zone, so from a watcher it was a way to silence a
+  // genuine dragging alarm on a boat they are not standing on — verified
+  // working against a running app. A watcher silencing their OWN device is
+  // still possible and still useful; the client does that locally without
+  // asking the server, because it is nobody else's business.
   socket.on('acknowledge-alarm', () => {
+    if (!requireBoat(socket, 'acknowledge-alarm')) return;
+
     const session = sessions.get(socket.sessionId);
     if (session) {
       session.alarmed = false;

@@ -193,6 +193,119 @@ describe('resuming a watch as the boat phone', () => {
     other.close();
   });
 
+  it('does not let a watcher change the watch', async () => {
+    // The session ID is a bearer token — printed on every watcher's screen,
+    // encoded in a QR meant to be photographed. So a watcher holding one must
+    // not be able to touch the watch itself. Each of these was verified
+    // working against a running app before the guard existed; the zone one is
+    // the worst, because the boat phone evaluates its alarm against exactly
+    // the zone it is sent, making an empty zone a remote kill switch.
+    const server = await boot();
+    const sessionId = await createOwnedSession(server.base, 'device-boat');
+    const zone = [
+      [43.08, 6.15],
+      [43.0805, 6.15],
+      [43.0805, 6.1505],
+      [43.08, 6.1505]
+    ];
+    const anchor = { latitude: 43.08, longitude: 6.15, accuracy: 4 };
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    boat.emit('update-zone', { zone });
+    boat.emit('update-anchor', { anchor, resetTrack: true });
+    // Boat is outside its zone: the alarm is genuinely up.
+    boat.emit('update-location', {
+      location: { latitude: 43.09, longitude: 6.15, accuracy: 5, timestamp: new Date().toISOString() }
+    });
+    await delay(400);
+
+    const before = await (await fetch(`${server.base}/api/sessions/${sessionId}`)).json();
+    assert.equal(before.zone.length, 4, 'precondition: a zone is set');
+    assert.equal(before.alarmed, true, 'precondition: the alarm is up');
+
+    const watcher = await connect(server.base);
+    await joinSession(watcher, sessionId, 'remote', 'device-watcher');
+    await delay(200);
+
+    watcher.emit('update-zone', { zone: [] });
+    watcher.emit('update-anchor', { anchor: null, resetTrack: true });
+    watcher.emit('update-location', {
+      location: { latitude: 43.08, longitude: 6.15, accuracy: 5, timestamp: new Date().toISOString() }
+    });
+    watcher.emit('acknowledge-alarm');
+    watcher.emit('restore-track', { track: [[43.08, 6.15, Date.now()]] });
+    await delay(600);
+
+    const after = await (await fetch(`${server.base}/api/sessions/${sessionId}`)).json();
+    assert.equal(after.zone.length, 4, 'a watcher must not erase the zone');
+    assert.ok(after.anchor, 'a watcher must not clear the anchor');
+    assert.equal(after.alarmed, true, 'a watcher must not silence the alarm session-wide');
+    assert.equal(
+      Object.keys(after.locations).length,
+      1,
+      'a watcher must not inject a position of its own'
+    );
+
+    boat.close();
+    watcher.close();
+  });
+
+  it('still lets the boat phone do all of it', async () => {
+    // The guard must not have locked the boat out of its own watch.
+    const server = await boot();
+    const sessionId = await createOwnedSession(server.base, 'device-boat');
+    const zone = [
+      [43.08, 6.15],
+      [43.0805, 6.15],
+      [43.0805, 6.1505]
+    ];
+
+    const boat = await connect(server.base);
+    await joinSession(boat, sessionId, 'main', 'device-boat');
+    boat.emit('update-zone', { zone });
+    boat.emit('update-anchor', {
+      anchor: { latitude: 43.08, longitude: 6.15, accuracy: 4 },
+      resetTrack: true
+    });
+    boat.emit('update-location', {
+      location: { latitude: 43.09, longitude: 6.15, accuracy: 5, timestamp: new Date().toISOString() }
+    });
+    await delay(400);
+
+    let body = await (await fetch(`${server.base}/api/sessions/${sessionId}`)).json();
+    assert.equal(body.zone.length, 3);
+    assert.ok(body.anchor);
+    assert.equal(body.alarmed, true);
+
+    boat.emit('acknowledge-alarm');
+    await delay(300);
+    body = await (await fetch(`${server.base}/api/sessions/${sessionId}`)).json();
+    assert.equal(body.alarmed, false, 'the boat phone may still silence its own alarm');
+
+    boat.close();
+  });
+
+  it('refuses a device id that means something to an object', async () => {
+    // Device IDs are object keys in session.locations and deviceSockets.
+    const server = await boot();
+    const sessionId = await createSession(server.base);
+
+    const socket = await connect(server.base);
+    await joinSession(socket, sessionId, 'main', '__proto__');
+    socket.emit('update-location', {
+      location: { latitude: 43.08, longitude: 6.15, accuracy: 5, timestamp: new Date().toISOString() }
+    });
+    await delay(400);
+
+    const body = await (await fetch(`${server.base}/api/sessions/${sessionId}`)).json();
+    const keys = Object.keys(body.locations);
+    assert.equal(keys.length, 1, 'the position is still recorded, under a safe key');
+    assert.ok(!keys.includes('__proto__'), `'__proto__' must not be used as a key, got ${keys}`);
+
+    socket.close();
+  });
+
   it('does not disturb the watchers when a takeover is refused', async () => {
     const server = await boot();
     const sessionId = await createOwnedSession(server.base, 'device-boat');

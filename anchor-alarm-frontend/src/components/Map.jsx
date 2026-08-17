@@ -239,7 +239,15 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
 
   useEffect(() => {
     if (!map.current || zoneEditing) return;
-    if (!zone || zone.length < 3) return;
+    if (!zone || zone.length < 3) {
+      // A zone that has gone away has to leave the map with it. This used to
+      // return early, so a zone cleared from anywhere other than the raise-
+      // anchor button (which clears the layers itself) stayed drawn: the map
+      // went on showing an armed-looking watch while nothing was armed, and
+      // only the small "Not armed" pill said otherwise.
+      drawnItems.current?.clearLayers();
+      return;
+    }
     if (getZonePolygon()) return;
     setZonePolygon(zone);
   }, [zone, zoneEditing]);

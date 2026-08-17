@@ -121,6 +121,9 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // the zone sheet instead of the removed toolbar).
   const editHandler = useRef(null);
   const [anchorRadius, setAnchorRadius] = useState(DEFAULT_ANCHOR_RADIUS);
+  // Whether anchorRadius has been reconciled with an already-confirmed zone
+  // on this mount — see the effect below.
+  const radiusSyncedToZone = useRef(false);
   const [zoneEditing, setZoneEditing] = useState(false); // sheet visible
   const [zoneMode, setZoneMode] = useState('circle'); // 'circle' | 'shape'
   // Confirming from the drop-anchor flow arms the alarm; re-editing an
@@ -236,6 +239,31 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     drawnItems.current.clearLayers();
     drawnItems.current.addLayer(L.polygon(points, ZONE_STYLE));
   };
+
+  // anchorRadius is UI state that starts at the default every time this
+  // component mounts, while the zone it is supposed to describe comes back
+  // from local storage or the server. Resuming a watch is the case where they
+  // first disagreed, and the consequences ran deeper than a wrong slider:
+  //
+  //   - isZoneReshaped compares every vertex against anchorRadius, so a plain
+  //     60 m circle read as hand-reshaped against the 25 m default. "Adjust
+  //     zone" opened the vertex editor instead of the radius slider.
+  //   - switching back to Circle then warned that a hand-drawn shape would be
+  //     lost, about a shape that never existed.
+  //   - accepting that rebuilt the circle from anchorRadius, silently
+  //     shrinking a 60 m zone to 25 m. A tighter zone than the skipper set is
+  //     a night of false alarms, and nobody asked for it.
+  //
+  // Derive it from the zone instead, once per mount. A genuinely reshaped zone
+  // still reads as reshaped afterwards: the radius becomes its furthest
+  // vertex, so its nearer ones still differ by more than the tolerance.
+  useEffect(() => {
+    if (radiusSyncedToZone.current || zoneEditing) return;
+    if (!anchor || !zone || zone.length < 3) return;
+    const derived = Math.round(zoneRadiusMeters(anchor, zone));
+    if (derived > 0) setAnchorRadius(derived);
+    radiusSyncedToZone.current = true;
+  }, [anchor, zone, zoneEditing]);
 
   useEffect(() => {
     if (!map.current || zoneEditing) return;

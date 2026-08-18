@@ -34,7 +34,16 @@ alarm still fires. Everything else in this repo exists to serve that.
   working out whether a 4 a.m. alarm was real.
 - **Remote monitoring** — join by code or QR from another phone or a browser.
   Watchers are told when the boat goes quiet, and when the watch is ended
-  deliberately.
+  deliberately. A watcher running the app with it **open** also sounds and
+  vibrates when the alarm fires, including one that opens or reconnects while
+  the alarm is already running.
+
+  Two limits, both by design. A watcher phone with the app **backgrounded or
+  the screen off** will not alert: only the boat phone runs a foreground
+  service, and there are no push notifications. And the **hosted website
+  never makes a sound** — the alarm audio is a native Android plugin, so a
+  browser tab shows the alarm silently. The boat phone is the alarm; a
+  watcher is a second pair of eyes, not a second alarm clock.
 - **Survives restarts** — sessions are snapshotted to disk, so a deploy or a
   host migration is not the end of the night's watch.
 - **Resume a watch** — if the boat phone is killed (Android, a flat battery, a

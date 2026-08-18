@@ -382,7 +382,25 @@ export default function App() {
       return;
     }
     if (acknowledgedRef.current) return;
+    const alreadyShowing = alarmedRef.current;
     setAlarmedState(true);
+    // Making the noise belongs HERE, not only in the alarm-status-changed
+    // handler, because that event fires only on a server-side transition. A
+    // watcher learns the alarm is on by three routes, and the other two used
+    // to raise the takeover screen in total silence:
+    //
+    //   state-update     — opening the app, or reconnecting, while the boat
+    //                      is already dragging
+    //   location-updated — every fix after that
+    //
+    // So a watcher whose phone dropped signal for twenty seconds mid-drag, or
+    // who opened the app to check, got a full-screen red alarm and no sound
+    // at all. In a pocket that is indistinguishable from nothing happening.
+    //
+    // Guarded on alreadyShowing so a stream of fixes during one alarm does not
+    // restart the siren on every one, and skipped entirely above when this
+    // watcher has silenced their own device.
+    if (!alreadyShowing) triggerAlarmSequence();
   };
 
   const applyTheme = (next) => {
@@ -705,14 +723,10 @@ export default function App() {
       // see a phantom alarm either.
       if (sessionRef.current?.role === 'main') return;
 
-      // Don't re-fire the notification/haptics if this monitor is already
-      // showing the alarm — nor if this watcher has silenced their own
-      // device, which applyRemoteAlarm signals by leaving alarmedRef false.
-      const alreadyAlarmed = alarmedRef.current;
+      // Raising the takeover and making the noise are one decision, taken in
+      // applyRemoteAlarm so that all three routes a watcher can learn about
+      // an alarm behave identically.
       applyRemoteAlarm(data.alarmed);
-      if (data.alarmed && !alreadyAlarmed && alarmedRef.current) {
-        triggerAlarmSequence();
-      }
     });
 
     newSocket.on('boat-offline', () => {

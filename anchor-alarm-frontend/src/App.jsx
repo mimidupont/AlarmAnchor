@@ -771,11 +771,16 @@ export default function App() {
     });
 
     newSocket.on('alarm-acknowledged', (data) => {
-      // Someone (possibly on another device) acknowledged: silence the
-      // local alarm too, and keep it silenced until back inside the zone.
+      // The BOAT PHONE acknowledged — the server accepts this event from
+      // nobody else, so it is no longer "possibly another device" as the
+      // comment here used to say. Silence this device too and keep it
+      // silenced until the boat is back inside the zone.
+      //
+      // Through setAlarmedState rather than writing the flag directly: it is
+      // the one place that stops the noise on a true -> false transition, and
+      // the last path in the file that went around it.
       acknowledgedRef.current = true;
-      alarmedRef.current = data.alarmed;
-      setAlarmed(data.alarmed);
+      setAlarmedState(data.alarmed);
       stopAlarm();
     });
 

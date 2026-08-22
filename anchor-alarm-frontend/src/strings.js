@@ -110,6 +110,7 @@ export const strings = {
     // GPS track
     trackOff: 'Track off',
     trackLastHour: 'Track 1 h',
+    themeLabel: 'Theme: {name}',
     trackAll: 'Track all',
 
     // Zone editor sheet
@@ -253,6 +254,7 @@ export const strings = {
     // GPS track
     trackOff: 'Trace masquée',
     trackLastHour: 'Trace 1 h',
+    themeLabel: 'Thème : {name}',
     trackAll: 'Trace complète',
 
     // Zone editor sheet

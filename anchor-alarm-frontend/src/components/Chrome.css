@@ -276,3 +276,51 @@
 .track-toggle-off {
   color: var(--text-secondary);
 }
+
+/* ---- Monitoring-gap alarm delay (remote monitors) ---- */
+
+.delay-picker {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.delay-picker-label {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.delay-segmented {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+}
+
+.delay-segmented-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.delay-segmented-btn-active {
+  background: var(--ok-strong);
+  color: #ffffff;
+}
+
+.delay-picker-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}

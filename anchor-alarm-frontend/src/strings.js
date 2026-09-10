@@ -62,6 +62,9 @@ export const strings = {
     monitoringStoppedMessage:
       'The boat phone is no longer reporting. The boat is not being watched. It may have been closed, lost signal, or run out of battery — if it reconnects, monitoring resumes on its own.',
     monitoringStoppedAck: 'Understood',
+    connectionLostTitle: 'Connection lost',
+    connectionLostMessage:
+      'This phone can no longer reach the server, so the boat is not being watched from here. The boat phone keeps its own alarm running on board. Monitoring resumes on its own once the connection is back.',
     leave: 'Leave',
     stay: 'Stay',
 
@@ -71,6 +74,15 @@ export const strings = {
     anchorPosition: '⚓ Anchor position',
     adjustRadius: 'Adjust radius',
     removeAnchor: 'Remove anchor',
+
+    // Alarm on network loss (remote monitors)
+    linkAlarmDelayLabel: 'Alarm if the boat goes unheard',
+    linkAlarmDelayHint:
+      'How long a connection gap must last before this phone sounds the alarm. Short gaps are normal — the boat phone keeps its own alarm running with no network at all.',
+    delayImmediate: 'At once',
+    delay2min: '2 min',
+    delay10min: '10 min',
+    delay1h: '1 h',
 
     // Status pill + sheet
     pillNoGps: 'No GPS',
@@ -137,6 +149,8 @@ export const strings = {
     unknownLocation: 'Unknown location',
     fgsTitle: 'Anchor alarm active',
     fgsMessage: 'Tracking the boat position',
+    notifLinkTitle: '⚠️ BOAT NOT BEING WATCHED',
+    notifLinkBody: 'No news from the boat. This phone is no longer monitoring it.',
 
     // Session recovery (the server lost the session; the alarm never stopped)
     recoveredNotice: 'Reconnected — new session code {id}. Re-share it with your crew.',
@@ -208,6 +222,9 @@ export const strings = {
     monitoringStoppedMessage:
       "Le téléphone du bateau ne transmet plus. Le bateau n'est plus surveillé. L'application a pu être fermée, perdre le réseau ou tomber en panne de batterie — s'il se reconnecte, la surveillance reprend d'elle-même.",
     monitoringStoppedAck: 'Compris',
+    connectionLostTitle: 'Connexion perdue',
+    connectionLostMessage:
+      "Ce téléphone ne joint plus le serveur : le bateau n'est plus surveillé depuis ici. Le téléphone du bateau, lui, garde son alarme active à bord. La surveillance reprend d'elle-même dès le retour du réseau.",
     leave: 'Quitter',
     stay: 'Rester',
 
@@ -216,6 +233,14 @@ export const strings = {
     anchorPosition: "⚓ Position de l'ancre",
     adjustRadius: 'Ajuster le rayon',
     removeAnchor: "Retirer l'ancre",
+
+    linkAlarmDelayLabel: 'Alarme si le bateau ne donne plus de nouvelles',
+    linkAlarmDelayHint:
+      "Durée d'une coupure avant que ce téléphone ne déclenche l'alarme. Les coupures brèves sont normales — le téléphone du bateau garde son alarme active même sans réseau.",
+    delayImmediate: 'Aussitôt',
+    delay2min: '2 min',
+    delay10min: '10 min',
+    delay1h: '1 h',
 
     pillNoGps: 'Pas de GPS',
     pillGpsWeak: 'GPS faible',
@@ -279,6 +304,8 @@ export const strings = {
     unknownLocation: 'Position inconnue',
     fgsTitle: 'Alarme de mouillage active',
     fgsMessage: 'Surveillance de la position du bateau',
+    notifLinkTitle: '⚠️ BATEAU NON SURVEILLÉ',
+    notifLinkBody: "Plus de nouvelles du bateau. Ce téléphone ne le surveille plus.",
 
     recoveredNotice: 'Reconnecté — nouveau code de session {id}. Repartagez-le avec votre équipage.',
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import { gpsHealth } from '../utils/freshness';
+import AlarmDelayPicker from './AlarmDelayPicker';
 import './Chrome.css';
 
 /**
@@ -22,8 +23,21 @@ import './Chrome.css';
  * received; a dead socket means truly blind, so offline is danger here.
  *
  * Tapping the pill opens a sheet listing each subsystem with a status dot.
+ * On a remote monitor the sheet is also where the network-loss alarm delay
+ * is set: it is the one screen already about whether this device is still
+ * hearing the boat, and it is reachable in one tap mid-watch — which is
+ * when a watcher discovers that the delay they chose is wrong for tonight.
  */
-export default function StatusPill({ mode, connected, boatLocation, gpsError, armed, boatOffline }) {
+export default function StatusPill({
+  mode,
+  connected,
+  boatLocation,
+  gpsError,
+  armed,
+  boatOffline,
+  linkAlarmDelay,
+  onLinkAlarmDelayChange
+}) {
   const t = useT();
   const [sheetOpen, setSheetOpen] = useState(false);
   // Re-evaluate staleness every 5s even without new data.
@@ -126,6 +140,9 @@ export default function StatusPill({ mode, connected, boatLocation, gpsError, ar
               <span className="status-sheet-name">{t('zoneLabel')}</span>
               <span className="status-sheet-detail">{armed ? t('sheetArmed') : t('sheetNotArmed')}</span>
             </div>
+            {mode === 'remote' && onLinkAlarmDelayChange && (
+              <AlarmDelayPicker value={linkAlarmDelay} onChange={onLinkAlarmDelayChange} />
+            )}
             <button className="status-sheet-close" onClick={() => setSheetOpen(false)}>
               {t('close')}
             </button>

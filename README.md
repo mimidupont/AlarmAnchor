@@ -27,16 +27,21 @@ alarm still fires. Everything else in this repo exists to serve that.
   cell towers and wifi and hands the app a position that can be a kilometre
   out, through the same callback and looking identical. Against a 30 m zone
   that single fix is a 4 a.m. alarm about a boat that never moved, so fixes
-  too imprecise to be GPS, and jumps no anchored boat could make, are
-  ignored — but never for more than 30 s in a row, because a filter that can
-  reject for ever is a filter that can switch the alarm off in silence.
+  too imprecise to be GPS (worse than 100 m), and jumps faster than 50 kn,
+  are ignored — but never for more than 10 s in a row, because a filter that
+  can reject for ever is a filter that can switch the alarm off in silence.
+  The 50 kn headroom is deliberate: an anchor watch gets tested by driving
+  away or by teleporting a mock location, and a filter that blocks the test
+  is worse than the artefact it was aimed at.
   Dropping the anchor picks the most precise of the last few seconds of
   fixes rather than whichever arrived last: the anchor is the origin of
   every distance the watch measures.
 - **Alarm stream audio** — the alarm plays on Android's *alarm* stream, so a
   phone set to silent or vibrate still sounds it. Do Not Disturb can still
   suppress it unless alarms are allowed through; that is a device setting no
-  app can override.
+  app can override. Arming checks that the alarm stream is not turned down
+  to zero and says so in red if it is: that is the one setting that silences
+  the alarm completely while everything on screen still looks armed.
 - **Foreground service** — GPS keeps running with the screen off and the app
   backgrounded.
 - **Track** — the night's swing, capped at 3000 points, kept across

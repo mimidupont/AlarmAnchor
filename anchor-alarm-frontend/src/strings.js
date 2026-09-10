@@ -163,6 +163,8 @@ export const strings = {
     errLocPermission: 'Location permission was not granted',
     errDropAnchor: 'Could not set the anchor position: {msg}',
     errNotYourSession: 'That watch belongs to another phone. Only the phone that started a session can take it back over.',
+    alarmMutedWarning:
+      "This phone's alarm volume is turned all the way down, so the anchor alarm will be silent. Turn the alarm volume up with the volume keys, or in Settings › Sound › Alarm volume.",
   },
 
   fr: {
@@ -316,5 +318,7 @@ export const strings = {
     errLocPermission: 'Permission de localisation refusée',
     errDropAnchor: "Impossible de définir la position de l'ancre : {msg}",
     errNotYourSession: "Cette veille appartient à un autre téléphone. Seul le téléphone qui a créé la session peut la reprendre.",
+    alarmMutedWarning:
+      "Le volume des alarmes de ce téléphone est à zéro : l'alarme de mouillage sera silencieuse. Montez le volume des alarmes avec les touches de volume, ou dans Réglages › Son › Volume des alarmes.",
   }
 };

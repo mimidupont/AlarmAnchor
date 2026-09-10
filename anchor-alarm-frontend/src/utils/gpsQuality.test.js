@@ -116,6 +116,32 @@ describe('acceptFix', () => {
     expect(out.state.last).toEqual(good);
   });
 
+  it('lets the alarm be tested from a moving car', () => {
+    // 90 km/h = 25 m/s. Testing an anchor alarm means taking the phone
+    // away from the anchor, and a filter that suppresses the drive is a
+    // filter that tells the tester the alarm is broken.
+    let out = acceptFix(emptyFixFilter(), at(0), 1000);
+    for (let i = 1; i <= 10; i++) {
+      out = acceptFix(out.state, at(i * 24), 1000 + i * 1000);
+      expect(out.accept).toBe(true);
+    }
+  });
+
+  it('lets a teleported mock location through within the override', () => {
+    // The other way an alarm gets tested: an app that jumps the position
+    // straight out of the zone. The first fix is rejected as impossible —
+    // it is indistinguishable from a cell-tower artefact — but the alarm
+    // must not be held back longer than the override.
+    const teleported = at(5000);
+    let out = acceptFix(emptyFixFilter(), at(0), 1000);
+    out = acceptFix(out.state, teleported, 2000);
+    expect(out.accept).toBe(false);
+
+    out = acceptFix(out.state, teleported, 2000 + OUTLIER_OVERRIDE_MS);
+    expect(out.accept).toBe(true);
+    expect(OUTLIER_OVERRIDE_MS).toBeLessThanOrEqual(10000);
+  });
+
   it('accepts a fix that carries no accuracy at all', () => {
     // Some sources omit it. Unknown is not the same as bad, and refusing
     // to act would be refusing to run the alarm.

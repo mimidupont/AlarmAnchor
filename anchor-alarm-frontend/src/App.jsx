@@ -32,6 +32,7 @@ import { urlWithoutJoinParam } from './utils/joinLink';
 import { forgetWatch, loadWatch, pruneOrphanTracks, saveWatch } from './utils/watch';
 import { stampAllReceivedAt, stampReceivedAt } from './utils/freshness';
 import { acceptFix, bestRecentFix, emptyFixFilter, pruneFixes } from './utils/gpsQuality';
+import { alarmAudibility } from './utils/audibility';
 import {
   linkAlarmDelayMs,
   linkAlarmDueIn,
@@ -170,6 +171,10 @@ export default function App() {
   // keep re-interrupting them. Cleared when the boat comes back, so a
   // genuinely new outage warns again.
   const monitoringStoppedAck = useRef(false);
+  // The alarm stream on this phone is turned down to zero, so the alarm
+  // will be silent. Checked when the watch is armed — while the boat is
+  // still safely at anchor — and again whenever the alarm actually fires.
+  const [alarmMuted, setAlarmMuted] = useState(false);
   // Set to the new session ID after a successful recovery, so the user can
   // re-share the code. Dismissible, and deliberately never a modal — the
   // map must stay usable.
@@ -550,6 +555,28 @@ export default function App() {
     if (wasAlarmed && !value) stopAlarm();
   };
 
+  // Redefining the watch re-arms it.
+  //
+  // An acknowledgement means "I have seen THIS excursion and I want quiet";
+  // decideAlarm otherwise clears it only when a fix lands back inside the
+  // zone. Dropping the anchor somewhere new, moving it, or confirming a
+  // different zone are all the skipper saying the watch is now a different
+  // watch — and re-arming around a distant anchor, or on a zone the boat is
+  // already outside of, never produces a fix inside, so without this the
+  // flag survives for the rest of the session. Every later drag is then
+  // evaluated, found outside, and silenced: no alarm, no takeover screen,
+  // no warning, and a phone that looks armed from every screen. It is the
+  // quietest way this app can fail, and it is reachable from the most
+  // ordinary way to test it twice — leave the boat and move the anchor.
+  //
+  // `alarmed` is deliberately left alone: a siren that is actually sounding
+  // covers the screen with the takeover, so none of these actions can be
+  // reached while it is true, and clearing it here could only ever silence
+  // a real alarm. decideAlarm re-derives it from the next fix anyway.
+  const rearmAlarm = () => {
+    acknowledgedRef.current = false;
+  };
+
   // How a remote monitor applies the server's alarm verdict.
   //
   // A watcher who has silenced their own device must STAY silent for the rest
@@ -623,6 +650,24 @@ export default function App() {
       lights: true
     }).catch(err => console.warn('Channel creation failed:', err));
   }, []);
+
+  // Read the plugin's verdict on whether the alarm can be heard at all, and
+  // put the banner up if it cannot. Takes a status object when the caller
+  // already has one — triggerAlarmSequence gets it back from start(), so
+  // the check costs nothing at the one moment it matters most.
+  const applyAudibility = (status) => {
+    setAlarmMuted(!alarmAudibility(status).audible);
+  };
+
+  const checkAlarmAudible = async () => {
+    try {
+      applyAudibility(await AlarmAudio.status());
+    } catch (err) {
+      // Web, or an APK without the plugin. Unknown is not muted: never
+      // warn about something we could not read.
+      setAlarmMuted(false);
+    }
+  };
 
   const stopAlarm = async () => {
     // Stop the noise first, and independently of the notification: if
@@ -1004,12 +1049,11 @@ export default function App() {
     try {
       const status = await AlarmAudio.start();
       audible = !!(status && status.playing);
-      if (status && status.alarmVolume === 0) {
-        // Nothing we can do about it without overriding a system volume
-        // the user chose, but it is worth knowing this happened when a
-        // tester reports "the alarm never went off".
-        console.warn('⚠️ Alarm stream volume is 0 — the alarm will be silent.');
-      }
+      // Nothing we can do about a muted alarm stream without overriding a
+      // system volume the user chose — but the banner is how a tester who
+      // reports "the alarm never went off" finds out why, and it is on
+      // screen by the time they look.
+      applyAudibility(status);
       console.log('Alarm audio:', JSON.stringify(status));
     } catch (err) {
       // Web, or an older APK without the plugin. Fall back to the
@@ -1179,7 +1223,7 @@ export default function App() {
     if (verdict.overridden) {
       // The filter has been rejecting for longer than it is allowed to.
       // Acting on a poor fix beats a watch that has silently stopped.
-      console.warn(`⚠️ Accepting a poor GPS fix (${verdict.reason}) — nothing better in 30 s`);
+      console.warn(`⚠️ Accepting a poor GPS fix (${verdict.reason}) — nothing better in 10 s`);
     }
 
     const { latitude, longitude, accuracy } = fix;
@@ -1331,6 +1375,11 @@ export default function App() {
   const handleZoneUpdate = (newZone) => {
     setZone(newZone);
     zoneRef.current = newZone;
+    rearmAlarm();
+    // Arming is the moment to find out whether this phone can make a
+    // noise: the boat is still safely at anchor and the skipper is still
+    // looking at the screen. Finding out at 3 a.m. is finding out too late.
+    if (newZone && newZone.length >= 3) checkAlarmAudible();
     if (socket && sessionId) {
       socket.emit('update-zone', { zone: newZone });
     }
@@ -1386,6 +1435,7 @@ export default function App() {
       }
 
       setAnchor(anchorData);
+      rearmAlarm();
       // resetTrack: a new anchoring starts a fresh track. Moving an
       // existing anchor omits the flag and keeps the history.
       if (socket && sessionId) {
@@ -1421,6 +1471,7 @@ export default function App() {
   // better fix on where the anchor actually lies.
   const handleAnchorUpdate = (newAnchor) => {
     setAnchor(newAnchor);
+    rearmAlarm();
     if (socket && sessionId) {
       socket.emit('update-anchor', { anchor: newAnchor });
     }
@@ -1564,6 +1615,16 @@ export default function App() {
         <div className="error-banner">
           ❌ {error}
           <button onClick={() => setError(null)}>×</button>
+        </div>
+      )}
+
+      {/* The alarm stream is muted, so the alarm cannot be heard. Red and
+          dismissible rather than modal: it is as serious as an error, and
+          the map must stay usable while the skipper goes and fixes it. */}
+      {alarmMuted && (
+        <div className="error-banner">
+          🔇 {t('alarmMutedWarning')}
+          <button onClick={() => setAlarmMuted(false)}>×</button>
         </div>
       )}
 

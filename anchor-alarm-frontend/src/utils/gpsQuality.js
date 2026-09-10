@@ -21,8 +21,8 @@
 // fix:
 //
 //   accuracy — worse than MAX_USABLE_ACCURACY_M is not a GPS fix at all
-//   speed    — a jump implying more than MAX_PLAUSIBLE_SPEED_MPS, beyond
-//              what both fixes' own error radii could explain
+//   speed    — a jump implying more than MAX_PLAUSIBLE_SPEED_MPS (50 kn),
+//              beyond what both fixes' own error radii could explain
 //
 // THE OVERRIDE IS THE SAFETY PROPERTY. A filter that can reject fixes for
 // ever is a filter that can silently switch the alarm off: the boat phone
@@ -44,13 +44,29 @@ import { distanceMeters } from './geo';
 // struggling badly, and everything past it is cell/wifi triangulation.
 export const MAX_USABLE_ACCURACY_M = 100;
 
-// 15 m/s ≈ 29 kn. A boat that has broken out of its anchorage does 1-3 kn;
-// one under tow or motoring off does 6-8. Nothing at anchor does 29.
-export const MAX_PLAUSIBLE_SPEED_MPS = 15;
+// 25 m/s ≈ 50 kn. Far above anything a boat does — one that has broken out
+// of its anchorage makes 1-3 kn, under tow or motoring off 6-8 — and the
+// artefacts this is aimed at are nothing like marginal: a cell-tower fix
+// lands hundreds of metres away between two 1 Hz updates, which reads as
+// several hundred metres per second.
+//
+// The headroom is for the people testing the alarm. An anchor watch is
+// tested by taking the phone away from the anchor, and the two ways anyone
+// does that — driving, and a mock-location app that teleports the position
+// — are exactly what a tight speed gate rejects. A tester who is told "it
+// didn't ring" by their own tooling learns nothing about the alarm, and a
+// filter that gets in the way of testing the alarm is worse than the
+// artefact it was aimed at.
+export const MAX_PLAUSIBLE_SPEED_MPS = 25;
 
 // The longest the filter may go on rejecting before it has to believe the
 // GPS again. See the override note above.
-export const OUTLIER_OVERRIDE_MS = 30 * 1000;
+//
+// Ten seconds, not thirty: this is the worst case by which a genuine drag
+// that the filter has misjudged — or a tester teleporting the phone — is
+// audible anyway, and ten seconds of delay on an anchor alarm is nothing
+// while thirty is long enough for a tester to conclude it is broken.
+export const OUTLIER_OVERRIDE_MS = 10 * 1000;
 
 // How far back "drop the anchor here" is allowed to look for a better fix.
 //

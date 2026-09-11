@@ -15,11 +15,20 @@
 // watcher chooses how long a silence has to last before it means
 // something, from "tell me at once" to an hour.
 //
-// WHICH DEVICE THIS IS FOR: the remote monitor only. The boat phone
-// decides its own alarm from its own GPS (see decideAlarm) and is fully
-// armed with no network at all — waking the crew because the internet
-// dropped would be noise about a non-event, and the surest way to get the
-// alarm switched off. Its pill already says "Offline — local only".
+// WHICH DEVICE THIS IS FOR: both, but they mean different things by it.
+//
+// On the remote monitor it is the whole alarm: break either link and the
+// map lies, so a sustained gap has to ring.
+//
+// On the boat phone the anchor alarm still runs entirely on local GPS with
+// no network at all — losing the server never makes the boat any less
+// watched from on board. What it does mean is that everyone watching from
+// ashore has just gone blind, and a skipper who is relying on someone
+// ashore to raise the alarm wants to know the moment that safety net is
+// gone. So the boat sounds this too, on the same chosen delay, but only
+// once actually on watch (anchor down, zone set) — before that a dropped
+// connection means nothing. Set it to "1 h" (or leave the boat offline on
+// purpose) and it stays quiet.
 
 const KEY = 'linkAlarmDelay';
 
@@ -70,13 +79,21 @@ export function saveLinkAlarmDelay(id) {
 // a watcher whose own phone has lost signal is just as blind as one whose
 // boat phone has gone quiet, and "the boat is not being watched" is true
 // either way.
-export function linkIsDown({ role, connected, boatOffline, sessionEnded } = {}) {
-  if (role !== 'remote') return false;
+export function linkIsDown({ role, connected, boatOffline, sessionEnded, armed } = {}) {
   // The boat phone closed the watch on purpose and every monitor has been
   // told so in as many words. Ringing on top of that dialog would be an
   // alarm about something the watcher already knows and cannot act on.
   if (sessionEnded) return false;
-  return !connected || Boolean(boatOffline);
+  if (role === 'remote') {
+    return !connected || Boolean(boatOffline);
+  }
+  if (role === 'main') {
+    // boatOffline is a server->monitor signal and is never set here; the
+    // only link the boat can see break is its own reach to the server.
+    // Silence before the watch is armed means nothing, so ignore it.
+    return Boolean(armed) && !connected;
+  }
+  return false;
 }
 
 // Milliseconds until the link alarm is due: 0 if it is due now, or null if

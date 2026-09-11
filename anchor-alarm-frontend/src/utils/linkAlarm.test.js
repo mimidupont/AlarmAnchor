@@ -65,11 +65,24 @@ describe('linkIsDown', () => {
     expect(linkIsDown({ role: 'remote', connected: true, boatOffline: false })).toBe(false);
   });
 
-  it('is never down on the boat phone', () => {
-    // The boat phone alarms from its own GPS with no network at all.
-    // Ringing there because the internet dropped is noise about a
-    // non-event — see the note in linkAlarm.js.
-    expect(linkIsDown({ role: 'main', connected: false, boatOffline: true })).toBe(false);
+  it('is down on the boat phone once armed and its own socket drops', () => {
+    // The anchor alarm still runs on local GPS, but everyone watching from
+    // ashore has gone blind — see the note in linkAlarm.js.
+    expect(linkIsDown({ role: 'main', connected: false, armed: true })).toBe(true);
+  });
+
+  it('ignores a boat-phone outage before the watch is armed', () => {
+    // A dropped connection means nothing until there is a watch to lose.
+    expect(linkIsDown({ role: 'main', connected: false, armed: false })).toBe(false);
+  });
+
+  it('is up on an armed boat phone while its socket is healthy', () => {
+    // boatOffline is a server->monitor signal and must not count here.
+    expect(linkIsDown({ role: 'main', connected: true, armed: true, boatOffline: true })).toBe(false);
+  });
+
+  it('is down for neither an unknown role nor a bare call', () => {
+    expect(linkIsDown({ role: 'idle', connected: false, armed: true })).toBe(false);
     expect(linkIsDown({})).toBe(false);
   });
 });
@@ -114,6 +127,12 @@ describe('a watch that ended on purpose', () => {
     // "session ended" dialog, not an alarm about a broken connection.
     expect(
       linkIsDown({ role: 'remote', connected: false, boatOffline: true, sessionEnded: true })
+    ).toBe(false);
+  });
+
+  it('is not a link gap on the boat phone either', () => {
+    expect(
+      linkIsDown({ role: 'main', connected: false, armed: true, sessionEnded: true })
     ).toBe(false);
   });
 });

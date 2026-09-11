@@ -68,7 +68,7 @@ const RESHAPED_TOLERANCE_M = 2;
 // polygon sits at worst ~3% inside the nominal radius, far below GPS noise.
 const SHAPE_STEPS = 12;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, track, alarmed, theme, onCycleTheme, connected, gpsError }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, track, alarmed, theme, onCycleTheme, connected, gpsError, linkAlarmDelay, onLinkAlarmDelayChange }) {
   const t = useT();
   // Track visibility: All → 1 h → Off, persisted like the theme.
   const [trackMode, setTrackMode] = useState(() => {
@@ -109,14 +109,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
   // After that we leave the user's pan/zoom completely alone — the marker
   // still moves, but the map view is never touched again automatically.
   const hasCenteredMap = useRef(false);
-  // The anchor marker's popup is plain Leaflet DOM, not React — its
-  // buttons are wired up once when the popup first opens and call
-  // whatever these refs point to at click time, so they always trigger
-  // the current handler even though the popup itself isn't re-created
-  // on every render.
-  const handleAdjustRadiusRef = useRef(() => {});
-  const onClearAnchorRef = useRef(() => {});
-  const onMoveAnchorRef = useRef(() => {});
   // Live vertex-editing handler (leaflet-draw's edit mode, driven from
   // the zone sheet instead of the removed toolbar).
   const editHandler = useRef(null);
@@ -346,18 +338,13 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     }
 
     const anchorLatLng = [anchor.latitude, anchor.longitude];
-    const popupText = `${t('anchorPosition')}${
-      anchor.accuracy ? `<br/>${t('accuracyMeters', { n: Math.round(anchor.accuracy) })}` : ''
-    }<div class="popup-actions">
-      <button class="popup-adjust-radius">${t('adjustRadius')}</button>
-      <button class="popup-move-anchor">${t('moveAnchor')}</button>
-      <button class="popup-clear-anchor">${t('removeAnchor')}</button>
-    </div>`;
 
     if (!anchorMarker.current) {
+      // No popup: the anchor's actions (adjust zone, move, raise) live in
+      // the bottom action bar, and a tap-target popup duplicating them was
+      // just a second, smaller way to fire the same commands.
       anchorMarker.current = L.marker(anchorLatLng, { icon: ANCHOR_ICON, draggable: false })
-        .addTo(map.current)
-        .bindPopup(popupText);
+        .addTo(map.current);
 
       // Live preview while dragging in move mode. Leaflet's draggable
       // marker already stops the drag from panning the map.
@@ -368,44 +355,10 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
         previewZoneAt(latlng);
         updateMoveOffset(latlng);
       });
-
-      // Popup content is plain DOM, outside React's tree, so buttons
-      // inside it need manual wiring. Query for them fresh each time the
-      // popup opens (rather than once at creation) since setPopupContent
-      // below replaces the DOM nodes on every anchor/location update.
-      anchorMarker.current.on('popupopen', () => {
-        const popupEl = anchorMarker.current.getPopup().getElement();
-        if (!popupEl) return;
-
-        const adjustBtn = popupEl.querySelector('.popup-adjust-radius');
-        if (adjustBtn) {
-          adjustBtn.onclick = () => {
-            anchorMarker.current.closePopup();
-            handleAdjustRadiusRef.current();
-          };
-        }
-
-        const moveBtn = popupEl.querySelector('.popup-move-anchor');
-        if (moveBtn) {
-          moveBtn.onclick = () => {
-            anchorMarker.current.closePopup();
-            onMoveAnchorRef.current();
-          };
-        }
-
-        const clearBtn = popupEl.querySelector('.popup-clear-anchor');
-        if (clearBtn) {
-          clearBtn.onclick = () => {
-            anchorMarker.current.closePopup();
-            onClearAnchorRef.current();
-          };
-        }
-      });
     } else {
       // While dragging, the marker position is owned by the drag, not by
       // the (still unchanged) anchor prop.
       if (!movingAnchorRef.current) anchorMarker.current.setLatLng(anchorLatLng);
-      anchorMarker.current.setPopupContent(popupText);
     }
 
     const boatLocation = locations ? Object.values(locations)[0] : null;
@@ -743,20 +696,6 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
     onClearAnchor();
   };
 
-  // Keep the popup's button handlers pointing at the latest versions of
-  // these functions (the popup itself is created once, outside React).
-  //
-  // "Remove anchor" in the popup goes through the same confirmation and the
-  // same teardown as "Raise anchor" in the action bar. It used to call
-  // onClearAnchor directly, which cleared the anchor but left the zone
-  // polygon on the map and armed — and it did so with a single tap on a
-  // small target, unconfirmed.
-  useEffect(() => {
-    handleAdjustRadiusRef.current = handleAdjustZone;
-    onClearAnchorRef.current = () => setConfirmRaiseOpen(true);
-    onMoveAnchorRef.current = handleStartMoveAnchor;
-  });
-
   const boatLocation = locations ? Object.values(locations)[0] : null;
   const anchorDistance =
     anchor && boatLocation
@@ -843,6 +782,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
             boatLocation={boatLocation}
             gpsError={gpsError}
             armed={armed}
+            linkAlarmDelay={linkAlarmDelay}
+            onLinkAlarmDelayChange={onLinkAlarmDelayChange}
           />
         }
       />

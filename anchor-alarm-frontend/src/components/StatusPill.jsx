@@ -23,10 +23,12 @@ import './Chrome.css';
  * received; a dead socket means truly blind, so offline is danger here.
  *
  * Tapping the pill opens a sheet listing each subsystem with a status dot.
- * On a remote monitor the sheet is also where the network-loss alarm delay
- * is set: it is the one screen already about whether this device is still
- * hearing the boat, and it is reachable in one tap mid-watch — which is
- * when a watcher discovers that the delay they chose is wrong for tonight.
+ * The sheet is also where the connection-loss alarm delay is set, on both
+ * devices: it is the one screen already about whether the link is healthy,
+ * and it is reachable in one tap mid-watch — which is when someone
+ * discovers that the delay they chose is wrong for tonight. On the boat
+ * the wording is about this phone losing the server (and so the watchers
+ * ashore); on a remote monitor, about losing sight of the boat.
  */
 export default function StatusPill({
   mode,
@@ -140,8 +142,13 @@ export default function StatusPill({
               <span className="status-sheet-name">{t('zoneLabel')}</span>
               <span className="status-sheet-detail">{armed ? t('sheetArmed') : t('sheetNotArmed')}</span>
             </div>
-            {mode === 'remote' && onLinkAlarmDelayChange && (
-              <AlarmDelayPicker value={linkAlarmDelay} onChange={onLinkAlarmDelayChange} />
+            {onLinkAlarmDelayChange && (
+              <AlarmDelayPicker
+                value={linkAlarmDelay}
+                onChange={onLinkAlarmDelayChange}
+                label={mode === 'remote' ? undefined : t('boatLinkAlarmDelayLabel')}
+                hint={mode === 'remote' ? undefined : t('boatLinkAlarmDelayHint')}
+              />
             )}
             <button className="status-sheet-close" onClick={() => setSheetOpen(false)}>
               {t('close')}

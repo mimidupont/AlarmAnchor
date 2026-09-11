@@ -226,35 +226,6 @@
   border: none;
 }
 
-/* Buttons inside the anchor marker's popup — plain DOM, not React, so
-   these are queried and wired up manually (see Map.jsx) rather than
-   using onClick. */
-.popup-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.popup-actions button {
-  background: var(--bg-app);
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.popup-actions button:active {
-  background: var(--border-subtle);
-}
-
-.popup-clear-anchor {
-  color: var(--danger);
-}
-
 /* leaflet-draw's own floating tooltip ("Drag handles or markers to edit
    features") — the zone sheet carries that hint, so suppress it. */
 .map-container .leaflet-draw-tooltip {

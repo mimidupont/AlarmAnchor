@@ -4,23 +4,26 @@ import { LINK_ALARM_DELAYS } from '../utils/linkAlarm';
 import './Chrome.css';
 
 /**
- * How long the boat may go unheard before this phone raises the alarm.
+ * How long a connection may stay broken before this phone raises the alarm.
  *
- * Only ever shown to a remote monitor: the boat phone alarms from its own
- * GPS with no network at all, so a network-loss alarm there would be noise
- * about a non-event (see utils/linkAlarm.js).
+ * Shown on both devices, because both can lose the link — but they mean
+ * different things by it, so the caller supplies the wording. On a remote
+ * monitor it is the whole alarm; on the boat it warns that the shore has
+ * gone blind while the local-GPS anchor alarm keeps running. See
+ * utils/linkAlarm.js.
  *
  * A segmented control rather than a dropdown, for the same reason the zone
  * editor uses one: four options, and it is set with one thumb on a moving
  * boat in the dark.
  */
-export default function AlarmDelayPicker({ value, onChange, label }) {
+export default function AlarmDelayPicker({ value, onChange, label, hint }) {
   const t = useT();
+  const labelText = label ?? t('linkAlarmDelayLabel');
 
   return (
     <div className="delay-picker">
-      <div className="delay-picker-label">{label ?? t('linkAlarmDelayLabel')}</div>
-      <div className="delay-segmented" role="radiogroup" aria-label={t('linkAlarmDelayLabel')}>
+      <div className="delay-picker-label">{labelText}</div>
+      <div className="delay-segmented" role="radiogroup" aria-label={labelText}>
         {LINK_ALARM_DELAYS.map((option) => (
           <button
             key={option.id}
@@ -36,7 +39,7 @@ export default function AlarmDelayPicker({ value, onChange, label }) {
           </button>
         ))}
       </div>
-      <div className="delay-picker-hint">{t('linkAlarmDelayHint')}</div>
+      <div className="delay-picker-hint">{hint ?? t('linkAlarmDelayHint')}</div>
     </div>
   );
 }

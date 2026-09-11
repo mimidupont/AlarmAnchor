@@ -85,7 +85,7 @@ export const strings = {
       'How long a connection gap must last before this phone sounds the alarm. Short gaps are normal — the boat phone keeps its own alarm running with no network at all.',
     boatLinkAlarmDelayLabel: 'Alarm if this phone goes offline',
     boatLinkAlarmDelayHint:
-      'How long this phone must be unable to reach the server before it sounds the alarm — a warning that anyone watching from ashore can no longer see the boat. The anchor alarm keeps running here on local GPS the whole time.',
+      'While this app is open, how long this phone must be unable to reach the server before it warns you — a heads-up that anyone watching from ashore can no longer see the boat. The anchor alarm keeps running here on local GPS the whole time, on screen or off.',
     delayImmediate: 'At once',
     delay2min: '2 min',
     delay10min: '10 min',
@@ -251,7 +251,7 @@ export const strings = {
       "Durée d'une coupure avant que ce téléphone ne déclenche l'alarme. Les coupures brèves sont normales — le téléphone du bateau garde son alarme active même sans réseau.",
     boatLinkAlarmDelayLabel: 'Alarme si ce téléphone passe hors ligne',
     boatLinkAlarmDelayHint:
-      "Durée pendant laquelle ce téléphone doit être incapable de joindre le serveur avant de déclencher l'alarme — pour avertir que ceux qui surveillent depuis la terre ne voient plus le bateau. L'alarme de mouillage continue de tourner ici sur le GPS local pendant tout ce temps.",
+      "Tant que cette appli est ouverte, durée pendant laquelle ce téléphone doit être incapable de joindre le serveur avant de vous avertir — pour signaler que ceux qui surveillent depuis la terre ne voient plus le bateau. L'alarme de mouillage continue de tourner ici sur le GPS local pendant tout ce temps, écran allumé ou éteint.",
     delayImmediate: 'Aussitôt',
     delay2min: '2 min',
     delay10min: '10 min',

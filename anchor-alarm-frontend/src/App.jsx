@@ -166,6 +166,12 @@ export default function App() {
   // Bumped when the app comes back to the foreground, purely to re-run the
   // gap timer against the real clock — see the effect that reads it.
   const [resumeTick, setResumeTick] = useState(0);
+  // Whether the app is in the foreground. Only the boat phone's gap alarm
+  // reads this (foreground-only — see linkIsDown): a monitor must still ring
+  // in doze. Assume visible where there is no document (tests/SSR).
+  const [appVisible, setAppVisible] = useState(
+    typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  );
   const offlineTimer = useRef(null);
   // Set once the watcher has read the modal, so a single outage does not
   // keep re-interrupting them. Cleared when the boat comes back, so a
@@ -390,16 +396,19 @@ export default function App() {
   // thing standing between the two. See utils/linkAlarm.js.
   //
   // The boat phone comes through here too, but only once it is actually on
-  // watch: its own anchor alarm never needs the network, so the gap it
-  // reports is "the shore has gone blind", not "the boat is in danger".
-  // See utils/linkAlarm.js.
+  // watch AND with the app open: its own anchor alarm never needs the
+  // network, so the gap it reports is "the shore has gone blind", not "the
+  // boat is in danger", and a socket dropped by doze while backgrounded is
+  // not a gap worth waking anyone for. See utils/linkAlarm.js.
+  const linkRole = view === 'remote' ? 'remote' : view === 'main' ? 'main' : 'idle';
   const boatArmed = Boolean(anchor) && Array.isArray(zone) && zone.length >= 3;
   const linkDown = linkIsDown({
-    role: view === 'remote' ? 'remote' : view === 'main' ? 'main' : 'idle',
+    role: linkRole,
     connected,
     boatOffline,
     sessionEnded,
-    armed: boatArmed
+    armed: boatArmed,
+    visible: appVisible
   });
 
   // Set while THIS device is sounding for a gap rather than for a drag, so
@@ -515,7 +524,16 @@ export default function App() {
     // Only worth handing to the OS if there is real waiting to do; for
     // anything sooner the timer below is already the faster of the two and
     // pre-scheduling would just risk two noises at once.
-    if (dueIn > 2000) scheduleLinkAlarmNotification(linkDownSince + delayMs);
+    //
+    // Never on the boat, though: the OS notification is what makes a gap
+    // ring in doze, and the boat must NOT ring for a doze-dropped socket
+    // (foreground-only — see linkIsDown). Its gap only exists while the app
+    // is open, so the in-app timer below is enough and a doze-fired siren
+    // for an outage the skipper cannot see is exactly the false alarm to
+    // avoid. The remote monitor still pre-schedules so it rings asleep.
+    if (dueIn > 2000 && linkRole !== 'main') {
+      scheduleLinkAlarmNotification(linkDownSince + delayMs);
+    }
     offlineTimer.current = setTimeout(raiseLinkAlarm, dueIn);
     return clearOfflineWatch;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -527,7 +545,14 @@ export default function App() {
   // still silent on screen when the watcher picks the phone up.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') setResumeTick(Date.now());
+      const visible = document.visibilityState === 'visible';
+      // The boat's gap alarm reads this: going to the background retires the
+      // gap (linkDown falls false, the reset effect stands everything down),
+      // and returning re-opens it against a fresh clock — so a boat that was
+      // offline all night in a cove does not fire the instant it is picked
+      // up in the morning.
+      setAppVisible(visible);
+      if (visible) setResumeTick(Date.now());
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('pageshow', onVisible);

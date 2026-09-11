@@ -65,6 +65,9 @@ export const strings = {
     connectionLostTitle: 'Connection lost',
     connectionLostMessage:
       'This phone can no longer reach the server, so the boat is not being watched from here. The boat phone keeps its own alarm running on board. Monitoring resumes on its own once the connection is back.',
+    boatConnectionLostTitle: 'This phone is offline',
+    boatConnectionLostMessage:
+      'This phone can no longer reach the server, so anyone watching from ashore can no longer see the boat. The anchor alarm keeps running here on local GPS. It reconnects on its own once the connection is back.',
     leave: 'Leave',
     stay: 'Stay',
 
@@ -72,13 +75,17 @@ export const strings = {
     boatPosition: '📍 Boat position',
     accuracyMeters: 'Accuracy: {n} m',
     anchorPosition: '⚓ Anchor position',
-    adjustRadius: 'Adjust radius',
-    removeAnchor: 'Remove anchor',
 
-    // Alarm on network loss (remote monitors)
+    // Alarm on connection loss.
+    // On a remote monitor these describe losing sight of the boat; on the
+    // boat phone the boat-prefixed variants describe losing the server (and
+    // so the watchers ashore) while the anchor alarm keeps running locally.
     linkAlarmDelayLabel: 'Alarm if the boat goes unheard',
     linkAlarmDelayHint:
       'How long a connection gap must last before this phone sounds the alarm. Short gaps are normal — the boat phone keeps its own alarm running with no network at all.',
+    boatLinkAlarmDelayLabel: 'Alarm if this phone goes offline',
+    boatLinkAlarmDelayHint:
+      'How long this phone must be unable to reach the server before it sounds the alarm — a warning that anyone watching from ashore can no longer see the boat. The anchor alarm keeps running here on local GPS the whole time.',
     delayImmediate: 'At once',
     delay2min: '2 min',
     delay10min: '10 min',
@@ -151,6 +158,8 @@ export const strings = {
     fgsMessage: 'Tracking the boat position',
     notifLinkTitle: '⚠️ BOAT NOT BEING WATCHED',
     notifLinkBody: 'No news from the boat. This phone is no longer monitoring it.',
+    notifBoatOfflineTitle: '⚠️ PHONE OFFLINE',
+    notifBoatOfflineBody: 'This phone lost its connection. Anyone watching from ashore can no longer see the boat.',
 
     // Session recovery (the server lost the session; the alarm never stopped)
     recoveredNotice: 'Reconnected — new session code {id}. Re-share it with your crew.',
@@ -227,18 +236,22 @@ export const strings = {
     connectionLostTitle: 'Connexion perdue',
     connectionLostMessage:
       "Ce téléphone ne joint plus le serveur : le bateau n'est plus surveillé depuis ici. Le téléphone du bateau, lui, garde son alarme active à bord. La surveillance reprend d'elle-même dès le retour du réseau.",
+    boatConnectionLostTitle: 'Ce téléphone est hors ligne',
+    boatConnectionLostMessage:
+      "Ce téléphone ne joint plus le serveur : ceux qui surveillent depuis la terre ne voient plus le bateau. L'alarme de mouillage continue de tourner ici sur le GPS local. La connexion revient d'elle-même dès le retour du réseau.",
     leave: 'Quitter',
     stay: 'Rester',
 
     boatPosition: '📍 Position du bateau',
     accuracyMeters: 'Précision : {n} m',
     anchorPosition: "⚓ Position de l'ancre",
-    adjustRadius: 'Ajuster le rayon',
-    removeAnchor: "Retirer l'ancre",
 
     linkAlarmDelayLabel: 'Alarme si le bateau ne donne plus de nouvelles',
     linkAlarmDelayHint:
       "Durée d'une coupure avant que ce téléphone ne déclenche l'alarme. Les coupures brèves sont normales — le téléphone du bateau garde son alarme active même sans réseau.",
+    boatLinkAlarmDelayLabel: 'Alarme si ce téléphone passe hors ligne',
+    boatLinkAlarmDelayHint:
+      "Durée pendant laquelle ce téléphone doit être incapable de joindre le serveur avant de déclencher l'alarme — pour avertir que ceux qui surveillent depuis la terre ne voient plus le bateau. L'alarme de mouillage continue de tourner ici sur le GPS local pendant tout ce temps.",
     delayImmediate: 'Aussitôt',
     delay2min: '2 min',
     delay10min: '10 min',
@@ -308,6 +321,8 @@ export const strings = {
     fgsMessage: 'Surveillance de la position du bateau',
     notifLinkTitle: '⚠️ BATEAU NON SURVEILLÉ',
     notifLinkBody: "Plus de nouvelles du bateau. Ce téléphone ne le surveille plus.",
+    notifBoatOfflineTitle: '⚠️ TÉLÉPHONE HORS LIGNE',
+    notifBoatOfflineBody: "Ce téléphone a perdu sa connexion. Ceux qui surveillent depuis la terre ne voient plus le bateau.",
 
     recoveredNotice: 'Reconnecté — nouveau code de session {id}. Repartagez-le avec votre équipage.',
 

@@ -389,13 +389,17 @@ export default function App() {
   // — immediately, 2 min, 10 min or 1 h — and that choice is the only
   // thing standing between the two. See utils/linkAlarm.js.
   //
-  // The boat phone deliberately never comes through here: it alarms from
-  // its own GPS with no network at all.
+  // The boat phone comes through here too, but only once it is actually on
+  // watch: its own anchor alarm never needs the network, so the gap it
+  // reports is "the shore has gone blind", not "the boat is in danger".
+  // See utils/linkAlarm.js.
+  const boatArmed = Boolean(anchor) && Array.isArray(zone) && zone.length >= 3;
   const linkDown = linkIsDown({
-    role: view === 'remote' ? 'remote' : 'main',
+    role: view === 'remote' ? 'remote' : view === 'main' ? 'main' : 'idle',
     connected,
     boatOffline,
-    sessionEnded
+    sessionEnded,
+    armed: boatArmed
   });
 
   // Set while THIS device is sounding for a gap rather than for a drag, so
@@ -409,17 +413,29 @@ export default function App() {
     stopAlarm();
   };
 
+  // The gap means different things on the two devices, so it is worded
+  // differently: "the boat stopped reporting" to a watcher ashore, "this
+  // phone is offline, the shore is blind" on the boat itself.
+  const linkAlarmCopy = () => {
+    const onBoat = sessionRef.current?.role === 'main';
+    return {
+      title: tRef.current(onBoat ? 'notifBoatOfflineTitle' : 'notifLinkTitle'),
+      body: tRef.current(onBoat ? 'notifBoatOfflineBody' : 'notifLinkBody')
+    };
+  };
+
   // Hand the gap alarm to the OS as well as to a timer. See
   // LINK_ALARM_NOTIFICATION_ID: a backgrounded webview's timers are
   // throttled and, in doze, stopped, which is precisely the state a
   // monitor phone spends the night in.
   const scheduleLinkAlarmNotification = async (at) => {
+    const copy = linkAlarmCopy();
     try {
       await LocalNotifications.schedule({
         notifications: [{
           id: LINK_ALARM_NOTIFICATION_ID,
-          title: tRef.current('notifLinkTitle'),
-          body: tRef.current('notifLinkBody'),
+          title: copy.title,
+          body: copy.body,
           schedule: { at: new Date(at) },
           sound: 'alarm.mp3',
           autoCancel: true,
@@ -452,10 +468,7 @@ export default function App() {
     // to silence, and the takeover screen already says something worse.
     if (alarmedRef.current) return;
     linkAlarmSounding.current = true;
-    triggerAlarmSequence({
-      title: tRef.current('notifLinkTitle'),
-      body: tRef.current('notifLinkBody')
-    });
+    triggerAlarmSequence(linkAlarmCopy());
   };
 
   // Start the clock on a gap, and take everything back down when both
@@ -1648,15 +1661,25 @@ export default function App() {
       )}
 
       {/* The monitoring link has been broken for longer than the delay the
-          watcher chose. Which half broke decides the wording — "the boat
-          stopped reporting" and "this phone lost the server" call for very
-          different next steps, and only one of them is about the boat.
-          Suppressed while the "session ended" dialog is up: one clear
-          message, not two that appear to contradict each other. */}
+          chooser set. Which device — and which half — broke decides the
+          wording. On the boat it is always "this phone is offline, the
+          shore has gone blind" (the anchor alarm here is untouched). Ashore
+          it is "the boat stopped reporting" or "this phone lost the server",
+          which call for very different next steps and only one of which is
+          about the boat. Suppressed while the "session ended" dialog is up:
+          one clear message, not two that appear to contradict each other. */}
       {monitoringStopped && !sessionEnded && (
         <ConfirmDialog
-          title={connected ? t('monitoringStoppedTitle') : t('connectionLostTitle')}
-          message={connected ? t('monitoringStoppedMessage') : t('connectionLostMessage')}
+          title={
+            view === 'main'
+              ? t('boatConnectionLostTitle')
+              : connected ? t('monitoringStoppedTitle') : t('connectionLostTitle')
+          }
+          message={
+            view === 'main'
+              ? t('boatConnectionLostMessage')
+              : connected ? t('monitoringStoppedMessage') : t('connectionLostMessage')
+          }
           confirmLabel={t('monitoringStoppedAck')}
           danger
           onConfirm={handleMonitoringStoppedAck}
@@ -1771,6 +1794,8 @@ export default function App() {
           onClearAnchor={handleClearAnchor}
           onAnchorUpdate={handleAnchorUpdate}
           track={track}
+          linkAlarmDelay={linkAlarmDelay}
+          onLinkAlarmDelayChange={changeLinkAlarmDelay}
           onBack={() => requestLeaveSession(leaveMainSession)}
         />
       )}

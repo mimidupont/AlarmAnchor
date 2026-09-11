@@ -23,10 +23,25 @@ alarm still fires. Everything else in this repo exists to serve that.
   a hand-drawn shape around a quay or a mooring.
 - **Local alarm** — the boat phone evaluates every GPS fix against the zone
   itself. No server involved.
+- **Fixes it can believe** — a phone that cannot see satellites falls back to
+  cell towers and wifi and hands the app a position that can be a kilometre
+  out, through the same callback and looking identical. Against a 30 m zone
+  that single fix is a 4 a.m. alarm about a boat that never moved, so fixes
+  too imprecise to be GPS (worse than 100 m), and jumps faster than 50 kn,
+  are ignored — but never for more than 10 s in a row, because a filter that
+  can reject for ever is a filter that can switch the alarm off in silence.
+  The 50 kn headroom is deliberate: an anchor watch gets tested by driving
+  away or by teleporting a mock location, and a filter that blocks the test
+  is worse than the artefact it was aimed at.
+  Dropping the anchor picks the most precise of the last few seconds of
+  fixes rather than whichever arrived last: the anchor is the origin of
+  every distance the watch measures.
 - **Alarm stream audio** — the alarm plays on Android's *alarm* stream, so a
   phone set to silent or vibrate still sounds it. Do Not Disturb can still
   suppress it unless alarms are allowed through; that is a device setting no
-  app can override.
+  app can override. Arming checks that the alarm stream is not turned down
+  to zero and says so in red if it is: that is the one setting that silences
+  the alarm completely while everything on screen still looks armed.
 - **Foreground service** — GPS keeps running with the screen off and the app
   backgrounded.
 - **Track** — the night's swing, capped at 3000 points, kept across
@@ -39,11 +54,28 @@ alarm still fires. Everything else in this repo exists to serve that.
   the alarm is already running.
 
   Two limits, both by design. A watcher phone with the app **backgrounded or
-  the screen off** will not alert: only the boat phone runs a foreground
-  service, and there are no push notifications. And the **hosted website
-  never makes a sound** — the alarm audio is a native Android plugin, so a
-  browser tab shows the alarm silently. The boat phone is the alarm; a
-  watcher is a second pair of eyes, not a second alarm clock.
+  the screen off** will not alert to a *dragging* alarm: only the boat phone
+  runs a foreground service, and there are no push notifications (the
+  monitoring-gap alarm below is the one exception, because it can be
+  scheduled with the OS in advance). And the **hosted website never makes a
+  sound** — the alarm audio is a native Android plugin, so a browser tab
+  shows the alarm silently. The boat phone is the alarm; a watcher is a
+  second pair of eyes, not a second alarm clock.
+- **Alarm on network loss, with a delay you choose** — a monitor whose link
+  to the boat breaks is showing a map of where the boat *was*, which looks
+  exactly like a boat riding quietly at anchor. So the gap now rings, and the
+  watcher sets how long it has to last first: **at once, 2 min, 10 min or
+  1 h** (default 2 min), from the "Watch remotely" card or the status pill's
+  sheet mid-watch. Both halves of the link count — the boat phone going
+  quiet, and this phone losing the server — and each says which in as many
+  words. The delay is the whole point: doze, a headland and a wifi handover
+  break the link for seconds every night, and an alarm that cries wolf gets
+  muted, which is worse than no alarm at all. It is armed twice, as an
+  in-app timer and as a notification scheduled with Android, so it still
+  fires with the app backgrounded (as a notification sound, which silent
+  mode can suppress — the alarm-stream audio that beats silent mode needs
+  the app awake). The boat phone never does any of this: it alarms from its
+  own GPS with no network at all.
 - **Survives restarts** — sessions are snapshotted to disk, so a deploy or a
   host migration is not the end of the night's watch.
 - **Resume a watch** — if the boat phone is killed (Android, a flat battery, a
@@ -122,7 +154,8 @@ anchor-alarm-backend/          Node + Express + Socket.io relay
 anchor-alarm-frontend/         React 18 + Leaflet, and the Android app
   src/App.jsx                  session, GPS watcher, alarm, socket wiring
   src/components/              map, remote monitor, zone editor, dialogs
-  src/utils/                   alarm decision, geo, track, platform, ids
+  src/utils/                   alarm decision, GPS fix quality, link-loss
+                               alarm, geo, track, platform, ids
   src/*.test.js, src/utils/*.test.js
   android/                     Capacitor project
     .../AlarmAudioPlugin.java  alarm-stream audio + vibration

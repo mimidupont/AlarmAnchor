@@ -601,6 +601,15 @@ io.on('connection', (socket) => {
 
     if (session && isValidZone(zone)) {
       session.zone = zone;
+      // A new zone is a new watch, so the old acknowledgement dies with it.
+      //
+      // `acknowledged` means "the skipper has seen THIS excursion and wants
+      // quiet"; it is otherwise cleared only by a fix landing back inside
+      // the zone (see update-location). Re-arming around a different anchor,
+      // or on a zone the boat is already outside of, never produces such a
+      // fix — so without this the flag survives for the life of the session
+      // and every remote monitor stays silent through the next drag.
+      session.acknowledged = false;
       touchSession(session);
       io.to(socket.sessionId).emit('zone-updated', { zone });
     }
@@ -616,6 +625,9 @@ io.on('connection', (socket) => {
 
     if (session && (anchor === null || isValidLocation(anchor))) {
       session.anchor = anchor;
+      // Same rule as update-zone: moving or re-dropping the anchor redefines
+      // the watch, and a redefined watch starts armed.
+      session.acknowledged = false;
       // The track is scoped to one anchoring: dropping or raising starts
       // fresh, but *moving* an existing anchor keeps the history, which is
       // why the client sends the flag rather than the server guessing.

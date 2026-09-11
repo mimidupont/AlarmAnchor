@@ -31,6 +31,15 @@ import { ensureDeviceId, initDeviceId } from './utils/deviceId';
 import { urlWithoutJoinParam } from './utils/joinLink';
 import { forgetWatch, loadWatch, pruneOrphanTracks, saveWatch } from './utils/watch';
 import { stampAllReceivedAt, stampReceivedAt } from './utils/freshness';
+import { acceptFix, bestRecentFix, emptyFixFilter, pruneFixes } from './utils/gpsQuality';
+import { alarmAudibility } from './utils/audibility';
+import {
+  linkAlarmDelayMs,
+  linkAlarmDueIn,
+  linkIsDown,
+  loadLinkAlarmDelay,
+  saveLinkAlarmDelay
+} from './utils/linkAlarm';
 import { LangContext, defaultLang, makeT } from './i18n';
 import {
   appendPoint,
@@ -69,15 +78,20 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000'
 // asking a different server entirely.
 console.log(`⚓ Anchor Alarm — backend: ${BACKEND_URL}`);
 
-// How long the boat phone may be silent before a watcher is told outright
-// that nobody is monitoring. Matches the status pill's "no data" threshold,
-// so the pill and the modal never disagree about the same silence.
+// The notification the OS fires by itself when a monitoring gap outlives
+// the chosen delay.
 //
-// A boat phone reconnects constantly — doze, a headland, a marina wifi
-// handover — and a modal on every blip is a modal nobody reads. Overridable
-// only so this can be exercised without a 90 s wait; production builds set
-// nothing and get the default.
-const BOAT_OFFLINE_GRACE_MS = Number(process.env.REACT_APP_OFFLINE_GRACE_MS) || 90 * 1000;
+// A remote monitor spends the night with the screen off and the app frozen,
+// which is exactly when a JavaScript setTimeout is least likely to run:
+// Android throttles timers in a backgrounded webview and stops them
+// altogether in deep doze. So the gap alarm is armed twice — a timer for
+// the case where the app is awake, and this scheduled notification, which
+// the OS delivers on the anchor-alarm channel whether the app is running
+// or not. Whichever arrives first cancels the other.
+//
+// Distinct id from the dragging alarm's notification (1) so cancelling a
+// pending gap alarm can never take the dragging alarm off the screen.
+const LINK_ALARM_NOTIFICATION_ID = 2;
 
 const THEMES = ['day', 'night', 'red'];
 
@@ -142,11 +156,25 @@ export default function App() {
   // warns immediately and only escalates to a modal if the silence lasts.
   const [boatOffline, setBoatOffline] = useState(false);
   const [monitoringStopped, setMonitoringStopped] = useState(false);
+  // When the current monitoring gap started (either half of the link), or
+  // null while the boat is being watched normally. Drives the one timer
+  // that decides when the gap becomes an alarm.
+  const [linkDownSince, setLinkDownSince] = useState(null);
+  // How long a gap has to last before it rings. The watcher's choice, kept
+  // across restarts — see utils/linkAlarm.js for why it is a choice at all.
+  const [linkAlarmDelay, setLinkAlarmDelay] = useState(loadLinkAlarmDelay);
+  // Bumped when the app comes back to the foreground, purely to re-run the
+  // gap timer against the real clock — see the effect that reads it.
+  const [resumeTick, setResumeTick] = useState(0);
   const offlineTimer = useRef(null);
   // Set once the watcher has read the modal, so a single outage does not
   // keep re-interrupting them. Cleared when the boat comes back, so a
   // genuinely new outage warns again.
   const monitoringStoppedAck = useRef(false);
+  // The alarm stream on this phone is turned down to zero, so the alarm
+  // will be silent. Checked when the watch is armed — while the boat is
+  // still safely at anchor — and again whenever the alarm actually fires.
+  const [alarmMuted, setAlarmMuted] = useState(false);
   // Set to the new session ID after a successful recovery, so the user can
   // re-share the code. Dismissible, and deliberately never a modal — the
   // map must stay usable.
@@ -163,11 +191,17 @@ export default function App() {
   const sessionRef = useRef(null); // { sessionId, role } | null
   // Socket instance, reachable from the long-lived GPS watcher callback.
   const socketRef = useRef(null);
-  // Most recent GPS fix from the watcher, with arrival time. Used to drop
-  // the anchor instantly from the live watch instead of requesting a
+  // The last few seconds of accepted GPS fixes, newest last. Dropping the
+  // anchor picks the most precise one out of this instead of requesting a
   // second concurrent fix (which is slow, and starves entirely with an
-  // active watch in some environments).
-  const lastFixRef = useRef(null);
+  // active watch in some environments) or trusting whichever fix happened
+  // to arrive last. Pruned to the window on every fix, so it stays a
+  // handful of entries however long the night is.
+  const recentFixesRef = useRef([]);
+  // Rolling state of the fix-quality filter — see utils/gpsQuality.js. It
+  // lives in a ref because the GPS callback runs outside React's render
+  // cycle and must see the verdict on the previous fix synchronously.
+  const fixFilterRef = useRef(emptyFixFilter());
   // Local alarm state machine on the boat phone. The GPS callback and the
   // socket handlers both need the *current* values synchronously, so these
   // are refs updated at every state transition (not effects).
@@ -339,6 +373,162 @@ export default function App() {
     }
   };
 
+  // ---- The monitoring gap (remote monitors only) ----
+  //
+  // A watcher ashore is two links: this phone to the server, and the server
+  // to the boat phone. Break either and the map goes on showing a boat
+  // riding quietly at anchor, drawn exactly like a live one — the last
+  // position it heard. Saying so in a silent modal was no use to a phone
+  // face-down on a bunk, so the gap now rings, on the alarm stream, like
+  // the dragging alarm does.
+  //
+  // What makes that survivable is the delay: both links break constantly
+  // and harmlessly (doze, a headland, a wifi handover), and an alarm that
+  // cries wolf every night gets muted, which is worse than no alarm at
+  // all. The watcher picks how long a silence has to last before it counts
+  // — immediately, 2 min, 10 min or 1 h — and that choice is the only
+  // thing standing between the two. See utils/linkAlarm.js.
+  //
+  // The boat phone deliberately never comes through here: it alarms from
+  // its own GPS with no network at all.
+  const linkDown = linkIsDown({
+    role: view === 'remote' ? 'remote' : 'main',
+    connected,
+    boatOffline,
+    sessionEnded
+  });
+
+  // Set while THIS device is sounding for a gap rather than for a drag, so
+  // recovery and acknowledgement can stop that noise without ever silencing
+  // a real dragging alarm that happens to be running at the same time.
+  const linkAlarmSounding = useRef(false);
+
+  const stopLinkAlarmNoise = () => {
+    if (!linkAlarmSounding.current) return;
+    linkAlarmSounding.current = false;
+    stopAlarm();
+  };
+
+  // Hand the gap alarm to the OS as well as to a timer. See
+  // LINK_ALARM_NOTIFICATION_ID: a backgrounded webview's timers are
+  // throttled and, in doze, stopped, which is precisely the state a
+  // monitor phone spends the night in.
+  const scheduleLinkAlarmNotification = async (at) => {
+    try {
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: LINK_ALARM_NOTIFICATION_ID,
+          title: tRef.current('notifLinkTitle'),
+          body: tRef.current('notifLinkBody'),
+          schedule: { at: new Date(at) },
+          sound: 'alarm.mp3',
+          autoCancel: true,
+          channelId: 'anchor-alarm'
+        }]
+      });
+    } catch (err) {
+      // Web, or notifications refused. The in-app timer still fires.
+      console.warn('Could not pre-schedule the monitoring-gap alarm:', err);
+    }
+  };
+
+  const cancelLinkAlarmNotification = async () => {
+    try {
+      await LocalNotifications.cancel({
+        notifications: [{ id: LINK_ALARM_NOTIFICATION_ID }]
+      });
+    } catch (err) {
+      // Nothing was scheduled, or the plugin is unavailable.
+    }
+  };
+
+  const raiseLinkAlarm = () => {
+    if (monitoringStoppedAck.current) return;
+    // Whichever of the two armed paths gets here first retires the other.
+    cancelLinkAlarmNotification();
+    setMonitoringStopped(true);
+    // A boat that is genuinely dragging is already making this device
+    // shout. A second siren on top of it would only make the first harder
+    // to silence, and the takeover screen already says something worse.
+    if (alarmedRef.current) return;
+    linkAlarmSounding.current = true;
+    triggerAlarmSequence({
+      title: tRef.current('notifLinkTitle'),
+      body: tRef.current('notifLinkBody')
+    });
+  };
+
+  // Start the clock on a gap, and take everything back down when both
+  // halves of the link are healthy again — the situation the alarm and the
+  // dialog describe is simply no longer true, so neither should outlive it.
+  useEffect(() => {
+    if (!linkDown) {
+      setLinkDownSince(null);
+      setMonitoringStopped(false);
+      monitoringStoppedAck.current = false;
+      clearOfflineWatch();
+      cancelLinkAlarmNotification();
+      stopLinkAlarmNoise();
+      return;
+    }
+    // Only the FIRST event of a gap starts the clock: a flapping phone
+    // emits boat-offline repeatedly, and restarting the delay on each one
+    // would mean an outage that flaps every 90 s never reaches an alarm at
+    // all, however long it lasts.
+    setLinkDownSince((current) => (current === null ? Date.now() : current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkDown]);
+
+  // One timer per gap, armed for exactly what is left of the delay — not a
+  // poll. A monitor left on the chart table must not wake the phone once a
+  // second for an hour to discover that nothing has changed.
+  //
+  // Re-armed when the watcher changes the delay mid-gap, and on returning
+  // to the foreground, where an alarm that came due while the timer was
+  // throttled is found overdue and fires at once.
+  useEffect(() => {
+    clearOfflineWatch();
+    if (linkDownSince === null) return undefined;
+
+    const delayMs = linkAlarmDelayMs(linkAlarmDelay);
+    const dueIn = linkAlarmDueIn({
+      down: true,
+      downSince: linkDownSince,
+      delayMs,
+      acknowledged: monitoringStoppedAck.current
+    });
+    if (dueIn === null) return undefined;
+
+    // Only worth handing to the OS if there is real waiting to do; for
+    // anything sooner the timer below is already the faster of the two and
+    // pre-scheduling would just risk two noises at once.
+    if (dueIn > 2000) scheduleLinkAlarmNotification(linkDownSince + delayMs);
+    offlineTimer.current = setTimeout(raiseLinkAlarm, dueIn);
+    return clearOfflineWatch;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkDownSince, linkAlarmDelay, resumeTick]);
+
+  // Coming back to the foreground re-runs the timer effect above. Android
+  // throttles a backgrounded webview's timers and stops them outright in
+  // doze, so without this a gap alarm could be twenty minutes overdue and
+  // still silent on screen when the watcher picks the phone up.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') setResumeTick(Date.now());
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+    };
+  }, []);
+
+  const changeLinkAlarmDelay = (id) => {
+    setLinkAlarmDelay(id);
+    saveLinkAlarmDelay(id);
+  };
+
   // Every join carries the stable device ID: the server keys the session's
   // live positions by it rather than by socket.id, so a night of flapping
   // signal shows one boat marker instead of one per reconnect.
@@ -363,6 +553,28 @@ export default function App() {
     alarmedRef.current = value;
     setAlarmed(value);
     if (wasAlarmed && !value) stopAlarm();
+  };
+
+  // Redefining the watch re-arms it.
+  //
+  // An acknowledgement means "I have seen THIS excursion and I want quiet";
+  // decideAlarm otherwise clears it only when a fix lands back inside the
+  // zone. Dropping the anchor somewhere new, moving it, or confirming a
+  // different zone are all the skipper saying the watch is now a different
+  // watch — and re-arming around a distant anchor, or on a zone the boat is
+  // already outside of, never produces a fix inside, so without this the
+  // flag survives for the rest of the session. Every later drag is then
+  // evaluated, found outside, and silenced: no alarm, no takeover screen,
+  // no warning, and a phone that looks armed from every screen. It is the
+  // quietest way this app can fail, and it is reachable from the most
+  // ordinary way to test it twice — leave the boat and move the anchor.
+  //
+  // `alarmed` is deliberately left alone: a siren that is actually sounding
+  // covers the screen with the takeover, so none of these actions can be
+  // reached while it is true, and clearing it here could only ever silence
+  // a real alarm. decideAlarm re-derives it from the next fix anyway.
+  const rearmAlarm = () => {
+    acknowledgedRef.current = false;
   };
 
   // How a remote monitor applies the server's alarm verdict.
@@ -400,7 +612,13 @@ export default function App() {
     // Guarded on alreadyShowing so a stream of fixes during one alarm does not
     // restart the siren on every one, and skipped entirely above when this
     // watcher has silenced their own device.
-    if (!alreadyShowing) triggerAlarmSequence();
+    if (!alreadyShowing) {
+      // Whatever this device was sounding for, it is sounding for a
+      // dragging boat now — so the gap flag must stop claiming the noise,
+      // or a link that recovers a moment later would silence a real alarm.
+      linkAlarmSounding.current = false;
+      triggerAlarmSequence();
+    }
   };
 
   const applyTheme = (next) => {
@@ -432,6 +650,24 @@ export default function App() {
       lights: true
     }).catch(err => console.warn('Channel creation failed:', err));
   }, []);
+
+  // Read the plugin's verdict on whether the alarm can be heard at all, and
+  // put the banner up if it cannot. Takes a status object when the caller
+  // already has one — triggerAlarmSequence gets it back from start(), so
+  // the check costs nothing at the one moment it matters most.
+  const applyAudibility = (status) => {
+    setAlarmMuted(!alarmAudibility(status).audible);
+  };
+
+  const checkAlarmAudible = async () => {
+    try {
+      applyAudibility(await AlarmAudio.status());
+    } catch (err) {
+      // Web, or an APK without the plugin. Unknown is not muted: never
+      // warn about something we could not read.
+      setAlarmMuted(false);
+    }
+  };
 
   const stopAlarm = async () => {
     // Stop the noise first, and independently of the notification: if
@@ -729,28 +965,19 @@ export default function App() {
       applyRemoteAlarm(data.alarmed);
     });
 
+    // Half of the monitoring link; our own socket state is the other half.
+    // Both feed the one gap timer above, which is where the grace period,
+    // the escalation and the alarm now live — a handler that fires once
+    // per event cannot express "and it is still broken twenty minutes
+    // later".
     newSocket.on('boat-offline', () => {
       if (sessionRef.current?.role === 'main') return;
       setBoatOffline(true);
-      clearOfflineWatch();
-      // Grace period before shouting. A boat phone reconnects constantly —
-      // doze, a headland, a marina wifi handover — and a modal on every
-      // blip is a modal nobody reads. 90 s matches the staleness threshold
-      // the status pill already uses for "no data".
-      offlineTimer.current = setTimeout(() => {
-        if (!monitoringStoppedAck.current) setMonitoringStopped(true);
-      }, BOAT_OFFLINE_GRACE_MS);
     });
 
     newSocket.on('boat-online', () => {
       if (sessionRef.current?.role === 'main') return;
-      // The boat is reporting again: cancel the pending warning, and take
-      // the modal away if it is already up — the situation it describes is
-      // no longer true.
-      clearOfflineWatch();
       setBoatOffline(false);
-      setMonitoringStopped(false);
-      monitoringStoppedAck.current = false;
     });
 
     newSocket.on('session-ended', () => {
@@ -764,7 +991,11 @@ export default function App() {
       stopAlarm();
       // A deliberate end supersedes any pending "went quiet" warning: the
       // watcher should get one clear message, not two contradictory ones.
+      // The OS-held notification has to go too — the app may well be closed
+      // by the time it would have fired.
       clearOfflineWatch();
+      cancelLinkAlarmNotification();
+      linkAlarmSounding.current = false;
       setMonitoringStopped(false);
       setBoatOffline(false);
       setSessionEnded(true);
@@ -796,12 +1027,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-// Trigger alarm with boat data
-  const triggerAlarmSequence = async () => {
+// Trigger alarm with boat data.
+  //
+  // `override` swaps the notification's words without touching anything
+  // about how the alarm sounds: the monitoring-gap alarm is every bit as
+  // loud as the dragging one, but a notification reading "your boat has
+  // left the anchor zone" would be a lie, and the one thing a watcher must
+  // be able to do from the lock screen is tell the two apart.
+  const triggerAlarmSequence = async (override) => {
     const boatLocation = Object.values(locationsRef.current)[0];
     const locationText = boatLocation
       ? `Lat: ${boatLocation.latitude.toFixed(4)}, Lng: ${boatLocation.longitude.toFixed(4)}`
       : tRef.current('unknownLocation');
+    const title = override?.title || tRef.current('notifTitle');
+    const body = override?.body || tRef.current('notifBody', { loc: locationText });
 
     // Noise first. The notification is what wakes the screen and gives
     // somewhere to tap, but it is not what has to be heard — and if
@@ -810,12 +1049,11 @@ export default function App() {
     try {
       const status = await AlarmAudio.start();
       audible = !!(status && status.playing);
-      if (status && status.alarmVolume === 0) {
-        // Nothing we can do about it without overriding a system volume
-        // the user chose, but it is worth knowing this happened when a
-        // tester reports "the alarm never went off".
-        console.warn('⚠️ Alarm stream volume is 0 — the alarm will be silent.');
-      }
+      // Nothing we can do about a muted alarm stream without overriding a
+      // system volume the user chose — but the banner is how a tester who
+      // reports "the alarm never went off" finds out why, and it is on
+      // screen by the time they look.
+      applyAudibility(status);
       console.log('Alarm audio:', JSON.stringify(status));
     } catch (err) {
       // Web, or an older APK without the plugin. Fall back to the
@@ -828,8 +1066,8 @@ export default function App() {
       await LocalNotifications.schedule({
         notifications: [{
           id: 1,
-          title: tRef.current('notifTitle'),
-          body: tRef.current('notifBody', { loc: locationText }),
+          title,
+          body,
           // Only ask the notification to make a sound when the alarm
           // stream is not already doing it, so the two do not overlap
           // into a mess on a phone that is not silenced.
@@ -962,21 +1200,50 @@ export default function App() {
   // is reachable or not. The zone check runs LOCALLY first, so losing the
   // internet connection at anchor no longer disables the alarm; the server
   // round-trip only exists to feed remote monitors.
-  const handleGpsFix = ({ latitude, longitude, accuracy }) => {
+  const handleGpsFix = (fix) => {
+    const now = Date.now();
+
+    // Not every position a phone produces came from a satellite. A fix
+    // derived from cell towers or marina wifi arrives through this same
+    // callback looking identical and can be a kilometre out — against a
+    // 30 m zone that is a 4 a.m. alarm about a boat that never moved. The
+    // filter drops what is physically impossible and nothing else, and it
+    // can never go quiet for good: see utils/gpsQuality.js.
+    const verdict = acceptFix(fixFilterRef.current, fix, now);
+    fixFilterRef.current = verdict.state;
+    if (!verdict.accept) {
+      // Deliberately NOT setGpsError: this is not a fault the user can act
+      // on, and it must not paint the status pill red on one bad fix. The
+      // last good position simply ages, and if the junk keeps coming the
+      // pill reaches "GPS weak" and then "No GPS" on its own — which is
+      // the honest description of what is happening.
+      console.warn(`⚠️ Ignoring implausible GPS fix (${verdict.reason})`, fix);
+      return;
+    }
+    if (verdict.overridden) {
+      // The filter has been rejecting for longer than it is allowed to.
+      // Acting on a poor fix beats a watch that has silently stopped.
+      console.warn(`⚠️ Accepting a poor GPS fix (${verdict.reason}) — nothing better in 10 s`);
+    }
+
+    const { latitude, longitude, accuracy } = fix;
     const location = {
       latitude,
       longitude,
       accuracy,
       timestamp: new Date().toISOString()
     };
-    lastFixRef.current = { ...location, receivedAt: Date.now() };
+    recentFixesRef.current = pruneFixes(
+      [...recentFixesRef.current, { ...location, receivedAt: now }],
+      now
+    );
     setGpsError(null);
 
     // Drive the map/status directly from the local fix (no server echo).
     // Carries receivedAt like a relayed one does, so the status pill applies
     // one rule everywhere — and on this phone the clock it is measured
     // against is the same clock that wrote it, which is always correct.
-    setLocations({ boat: { ...location, receivedAt: Date.now() } });
+    setLocations({ boat: { ...location, receivedAt: now } });
 
     // Local alarm decision, mirroring the server's state machine: alarm
     // when outside the zone, stay silent after an acknowledgment, re-arm
@@ -994,8 +1261,9 @@ export default function App() {
     if (next.fire) triggerAlarmSequence();
 
     // Record the track after the alarm check, so nothing here can delay
-    // or affect the alarm decision.
-    const now = Date.parse(location.timestamp) || Date.now();
+    // or affect the alarm decision. Timestamped with the same `now` the
+    // fix was stamped with, so the track and the position can never
+    // disagree about when this fix arrived.
     if (shouldRecordPoint(trackRef.current, latitude, longitude, now)) {
       const next = appendPoint(trackRef.current, [latitude, longitude, now]);
       trackRef.current = next;
@@ -1107,6 +1375,11 @@ export default function App() {
   const handleZoneUpdate = (newZone) => {
     setZone(newZone);
     zoneRef.current = newZone;
+    rearmAlarm();
+    // Arming is the moment to find out whether this phone can make a
+    // noise: the boat is still safely at anchor and the skipper is still
+    // looking at the screen. Finding out at 3 a.m. is finding out too late.
+    if (newZone && newZone.length >= 3) checkAlarmAudible();
     if (socket && sessionId) {
       socket.emit('update-zone', { zone: newZone });
     }
@@ -1118,15 +1391,19 @@ export default function App() {
   const handleDropAnchor = async () => {
     try {
       let anchorData;
-      const lastFix = lastFixRef.current;
+      // The anchor is the origin of everything the watch measures — the
+      // zone is drawn around it, every distance is from it — so it is
+      // worth taking the best fix available rather than the latest one.
+      // The live watch is running at 1 Hz, and consecutive fixes are
+      // routinely 4 m and 22 m; picking the 4 m one costs nothing and is
+      // the cheapest precision in the app.
+      const best = bestRecentFix(recentFixesRef.current);
 
-      if (lastFix && Date.now() - lastFix.receivedAt < 10000) {
-        // The live high-accuracy watch already has a fresh fix — use it
-        // directly (instant, and avoids a second concurrent GPS request).
+      if (best) {
         anchorData = {
-          latitude: lastFix.latitude,
-          longitude: lastFix.longitude,
-          accuracy: lastFix.accuracy,
+          latitude: best.latitude,
+          longitude: best.longitude,
+          accuracy: best.accuracy,
           timestamp: new Date().toISOString()
         };
       } else {
@@ -1139,9 +1416,14 @@ export default function App() {
           }
         }
 
+        // maximumAge: 0 — without it the platform is free to answer with a
+        // cached position it took minutes ago, somewhere else entirely.
+        // For the one position the whole watch is measured from, waiting
+        // for the real thing is always the right trade.
         const position = await Geolocation.getCurrentPosition({
           enableHighAccuracy: true,
-          timeout: 10000
+          maximumAge: 0,
+          timeout: 15000
         });
 
         anchorData = {
@@ -1153,6 +1435,7 @@ export default function App() {
       }
 
       setAnchor(anchorData);
+      rearmAlarm();
       // resetTrack: a new anchoring starts a fresh track. Moving an
       // existing anchor omits the flag and keeps the history.
       if (socket && sessionId) {
@@ -1188,6 +1471,7 @@ export default function App() {
   // better fix on where the anchor actually lies.
   const handleAnchorUpdate = (newAnchor) => {
     setAnchor(newAnchor);
+    rearmAlarm();
     if (socket && sessionId) {
       socket.emit('update-anchor', { anchor: newAnchor });
     }
@@ -1233,11 +1517,19 @@ export default function App() {
     setAnchor(null);
     // Leaving cancels any pending "the boat went quiet" escalation —
     // otherwise it fires on the session picker, about a boat this device is
-    // no longer watching.
+    // no longer watching. The scheduled notification goes with it: that one
+    // is held by the OS and would otherwise sound with the app closed.
     clearOfflineWatch();
+    cancelLinkAlarmNotification();
+    stopLinkAlarmNoise();
     monitoringStoppedAck.current = false;
     setBoatOffline(false);
     setMonitoringStopped(false);
+    setLinkDownSince(null);
+    // A fresh session starts with a clean GPS filter and no borrowed fixes
+    // from the last anchorage.
+    fixFilterRef.current = emptyFixFilter();
+    recentFixesRef.current = [];
   };
 
   const leaveMainSession = () => {
@@ -1276,6 +1568,13 @@ export default function App() {
   const handleMonitoringStoppedAck = () => {
     monitoringStoppedAck.current = true;
     setMonitoringStopped(false);
+    // Silence this gap for as long as it lasts: the watcher has read it,
+    // and re-raising it every few minutes over the same unchanged outage
+    // is how an alarm gets muted for good. A gap that ends and starts
+    // again clears this and warns afresh.
+    clearOfflineWatch();
+    cancelLinkAlarmNotification();
+    stopLinkAlarmNoise();
   };
 
   // The watcher has read the "session ended" dialog. There is nothing left
@@ -1319,6 +1618,16 @@ export default function App() {
         </div>
       )}
 
+      {/* The alarm stream is muted, so the alarm cannot be heard. Red and
+          dismissible rather than modal: it is as serious as an error, and
+          the map must stay usable while the skipper goes and fixes it. */}
+      {alarmMuted && (
+        <div className="error-banner">
+          🔇 {t('alarmMutedWarning')}
+          <button onClick={() => setAlarmMuted(false)}>×</button>
+        </div>
+      )}
+
       {/* Session recovery notice. Non-blocking and dismissible on purpose:
           the map and the alarm must stay usable while it is shown. */}
       {recoveryNotice && (
@@ -1338,13 +1647,16 @@ export default function App() {
         />
       )}
 
-      {/* The boat phone has gone quiet for longer than the grace period.
+      {/* The monitoring link has been broken for longer than the delay the
+          watcher chose. Which half broke decides the wording — "the boat
+          stopped reporting" and "this phone lost the server" call for very
+          different next steps, and only one of them is about the boat.
           Suppressed while the "session ended" dialog is up: one clear
           message, not two that appear to contradict each other. */}
       {monitoringStopped && !sessionEnded && (
         <ConfirmDialog
-          title={t('monitoringStoppedTitle')}
-          message={t('monitoringStoppedMessage')}
+          title={connected ? t('monitoringStoppedTitle') : t('connectionLostTitle')}
+          message={connected ? t('monitoringStoppedMessage') : t('connectionLostMessage')}
           confirmLabel={t('monitoringStoppedAck')}
           danger
           onConfirm={handleMonitoringStoppedAck}
@@ -1436,6 +1748,8 @@ export default function App() {
           initialJoinId={joinParamRef.current || ''}
           lang={lang}
           onToggleLang={toggleLang}
+          linkAlarmDelay={linkAlarmDelay}
+          onLinkAlarmDelayChange={changeLinkAlarmDelay}
         />
       )}
 
@@ -1474,6 +1788,8 @@ export default function App() {
           connected={connected}
           boatOffline={boatOffline}
           track={track}
+          linkAlarmDelay={linkAlarmDelay}
+          onLinkAlarmDelayChange={changeLinkAlarmDelay}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}

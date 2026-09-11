@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { QRCodeSVG } from 'qrcode.react';
 import QrScanner from './QrScanner';
+import AlarmDelayPicker from './AlarmDelayPicker';
 import { useT } from '../i18n';
 import { APP_VERSION } from '../version';
 import { canCreateSession } from '../utils/platform';
@@ -36,7 +37,9 @@ export default function SessionManager({
   onForgetWatch,
   initialJoinId,
   lang,
-  onToggleLang
+  onToggleLang,
+  linkAlarmDelay,
+  onLinkAlarmDelayChange
 }) {
   const t = useT();
   const [sessionIdInput, setSessionIdInput] = useState(initialJoinId || '');
@@ -183,6 +186,14 @@ export default function SessionManager({
           {/* Without this the web page just looks like it is missing half
               its options. Say where a session actually comes from. */}
           {!canCreate && <p className="card-note">{t('createInAppNote')}</p>}
+
+          {/* Offered here as well as in the monitor's status sheet: this is
+              where someone is deciding to spend a night relying on the
+              thing, and the sheet is only discoverable once they are
+              already watching. */}
+          {onLinkAlarmDelayChange && (
+            <AlarmDelayPicker value={linkAlarmDelay} onChange={onLinkAlarmDelayChange} />
+          )}
         </div>
 
         <div className="footer-row">

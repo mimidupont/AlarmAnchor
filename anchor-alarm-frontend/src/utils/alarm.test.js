@@ -145,3 +145,47 @@ describe('recovery pacing', () => {
     expect(seen.every((ms) => ms >= RECOVERY_MIN_INTERVAL_MS)).toBe(true);
   });
 });
+
+// Why App.jsx's rearmAlarm() has to exist.
+//
+// decideAlarm is right to keep an acknowledged alarm silent while the boat
+// stays outside — that is the skipper motoring deliberately out of the
+// anchorage. What it cannot know is that the WATCH has changed underneath
+// it. The only thing that clears the flag here is a fix landing back
+// inside the zone, and the tests below are the two shapes where that fix
+// never comes. In both of them the alarm is silent for ever: not a missed
+// transition, an alarm that is switched off with nothing on screen saying
+// so. App.jsx therefore clears the acknowledgement itself whenever the
+// anchor or the zone changes — if that call is ever removed, this is the
+// behaviour that comes back.
+describe('an acknowledgement outliving its watch', () => {
+  it('silences a zone the boat is already outside of, for ever', () => {
+    const zoneFarAway = circlePolygonPoints(ANCHOR.lat + 0.005, ANCHOR.lng, 40, 32);
+    let state = { alarmed: false, acknowledged: true };
+
+    for (let i = 0; i < 100; i++) {
+      state = decideAlarm({ ...INSIDE, zone: zoneFarAway, ...state });
+      expect(state.fire).toBe(false);
+      expect(state.alarmed).toBe(false);
+    }
+    // Still set: nothing here can ever clear it.
+    expect(state.acknowledged).toBe(true);
+  });
+
+  it('survives the zone being cleared and rebuilt', () => {
+    // Raising the anchor takes the zone with it, and a zone of fewer than
+    // three points is not a zone — so the short-circuit hands the flag
+    // straight back, and it is waiting for the next anchorage.
+    let state = decideAlarm({ ...OUTSIDE, zone: [], alarmed: false, acknowledged: true });
+    expect(state.acknowledged).toBe(true);
+    state = decideAlarm({ ...OUTSIDE, zone: ZONE, ...state });
+    expect(state.fire).toBe(false);
+  });
+
+  it('is cleared the moment a fix does land inside — the case that hid this', () => {
+    // Re-anchoring where the boat actually is self-heals on the next fix,
+    // which is why the bug survived every test that moved the phone.
+    const state = decideAlarm({ ...INSIDE, zone: ZONE, alarmed: false, acknowledged: true });
+    expect(state.acknowledged).toBe(false);
+  });
+});

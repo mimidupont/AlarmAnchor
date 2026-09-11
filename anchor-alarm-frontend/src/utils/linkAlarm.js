@@ -79,19 +79,29 @@ export function saveLinkAlarmDelay(id) {
 // a watcher whose own phone has lost signal is just as blind as one whose
 // boat phone has gone quiet, and "the boat is not being watched" is true
 // either way.
-export function linkIsDown({ role, connected, boatOffline, sessionEnded, armed } = {}) {
+export function linkIsDown({ role, connected, boatOffline, sessionEnded, armed, visible } = {}) {
   // The boat phone closed the watch on purpose and every monitor has been
   // told so in as many words. Ringing on top of that dialog would be an
   // alarm about something the watcher already knows and cannot act on.
   if (sessionEnded) return false;
   if (role === 'remote') {
+    // A monitor left on the chart table MUST ring in doze — that is the
+    // whole point — so its gap does not depend on the app being open.
     return !connected || Boolean(boatOffline);
   }
   if (role === 'main') {
     // boatOffline is a server->monitor signal and is never set here; the
     // only link the boat can see break is its own reach to the server.
     // Silence before the watch is armed means nothing, so ignore it.
-    return Boolean(armed) && !connected;
+    //
+    // Foreground-only: backgrounded, the boat's socket is throttled by
+    // doze and drops for reasons that have nothing to do with real
+    // connectivity, so a doze-time boat gap is noise — the anchor alarm
+    // runs on local GPS regardless. Only a gap the skipper can actually
+    // see, with the app open, is worth sounding. `visible` is undefined for
+    // callers that don't track it (and for the tests), which reads as
+    // "assume visible" so the plain armed+offline case still holds.
+    return Boolean(armed) && !connected && visible !== false;
   }
   return false;
 }

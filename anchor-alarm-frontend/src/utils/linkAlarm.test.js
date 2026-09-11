@@ -81,6 +81,20 @@ describe('linkIsDown', () => {
     expect(linkIsDown({ role: 'main', connected: true, armed: true, boatOffline: true })).toBe(false);
   });
 
+  it('stays quiet on a backgrounded boat phone even when its socket is down', () => {
+    // Doze throttles the boat's socket for reasons unrelated to real
+    // connectivity; only a gap the skipper can see with the app open counts.
+    expect(linkIsDown({ role: 'main', connected: false, armed: true, visible: false })).toBe(false);
+  });
+
+  it('is down on an armed, visible boat phone whose socket dropped', () => {
+    expect(linkIsDown({ role: 'main', connected: false, armed: true, visible: true })).toBe(true);
+  });
+
+  it('does not gate the remote monitor on visibility (it must ring in doze)', () => {
+    expect(linkIsDown({ role: 'remote', connected: false, visible: false })).toBe(true);
+  });
+
   it('is down for neither an unknown role nor a bare call', () => {
     expect(linkIsDown({ role: 'idle', connected: false, armed: true })).toBe(false);
     expect(linkIsDown({})).toBe(false);

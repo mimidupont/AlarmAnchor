@@ -111,6 +111,8 @@ export const strings = {
     sheetFixAgo: 'Fix {s}s ago',
     sheetNoFix: 'No fix yet',
     sheetError: 'Error: {msg}',
+    testAlarm: '🔊 Test the alarm',
+    testAlarmPlaying: 'Playing…',
     close: 'Close',
 
     // Move anchor
@@ -174,6 +176,15 @@ export const strings = {
     errNotYourSession: 'That watch belongs to another phone. Only the phone that started a session can take it back over.',
     alarmMutedWarning:
       "This phone's alarm volume is turned all the way down, so the anchor alarm will be silent. Turn the alarm volume up with the volume keys, or in Settings › Sound › Alarm volume.",
+    // Battery / device health
+    sheetBattery: 'Battery',
+    sheetBoatBattery: 'Boat battery',
+    sheetCharging: 'charging',
+    sheetBatteryUnknown: 'unknown',
+    batteryLowWarning:
+      'This phone is at {pct}% and unplugged. It runs the anchor alarm — if it dies, the watch stops. Plug it in.',
+    batteryCriticalWarning:
+      'This phone is at {pct}% and unplugged. The anchor alarm stops if it dies — charge it now.',
   },
 
   fr: {
@@ -276,6 +287,8 @@ export const strings = {
     sheetFixAgo: 'Fix il y a {s}s',
     sheetNoFix: 'Aucun fix',
     sheetError: 'Erreur : {msg}',
+    testAlarm: "🔊 Tester l'alarme",
+    testAlarmPlaying: 'Lecture…',
     close: 'Fermer',
 
     // Move anchor
@@ -335,5 +348,13 @@ export const strings = {
     errNotYourSession: "Cette veille appartient à un autre téléphone. Seul le téléphone qui a créé la session peut la reprendre.",
     alarmMutedWarning:
       "Le volume des alarmes de ce téléphone est à zéro : l'alarme de mouillage sera silencieuse. Montez le volume des alarmes avec les touches de volume, ou dans Réglages › Son › Volume des alarmes.",
+    sheetBattery: 'Batterie',
+    sheetBoatBattery: 'Batterie du bateau',
+    sheetCharging: 'en charge',
+    sheetBatteryUnknown: 'inconnue',
+    batteryLowWarning:
+      "Ce téléphone est à {pct}% et débranché. Il fait tourner l'alarme de mouillage — s'il s'éteint, la veille s'arrête. Branchez-le.",
+    batteryCriticalWarning:
+      "Ce téléphone est à {pct}% et débranché. L'alarme de mouillage s'arrête s'il s'éteint — chargez-le maintenant.",
   }
 };

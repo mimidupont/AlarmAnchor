@@ -208,7 +208,7 @@ npm run build           # Production build
 
 | Aspect | Value |
 |--------|-------|
-| GPS Update Interval | 10 seconds |
+| GPS Updates | continuous — a foreground-service watcher delivers fixes as the OS produces them, not on a fixed poll |
 | Geofencing Algorithm | Ray-casting O(n) |
 | Session ID Length | 9 characters (32-char alphabet, 32^9) |
 | Session TTL | 24 h of **inactivity** (not age — an overnight watch must survive) |

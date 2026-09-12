@@ -100,6 +100,25 @@ d'un même ponton partagent une IP) et `MAX_SESSIONS` (500 par défaut ;
 au-delà, la session inactive depuis le plus longtemps est évincée avant
 tout refus en 503).
 
+## Notifications push (facultatif)
+
+Le push web réveille un suiveur **sur navigateur** en cas d'alarme de
+dérapage, même onglet en arrière-plan. Désactivé tant qu'aucune clé VAPID
+n'est configurée ; le téléphone du bord ne s'en sert jamais.
+
+```bash
+# Générer une paire de clés VAPID une fois :
+npx web-push generate-vapid-keys
+# Puis, côté backend :
+fly secrets set VAPID_PUBLIC_KEY="<clé publique>" \
+  VAPID_PRIVATE_KEY="<clé privée>" \
+  VAPID_SUBJECT="mailto:vous@exemple.com"
+```
+
+Le frontend récupère la clé publique sur `/api/push/vapid-public-key` et ne
+propose le push que si une clé est renvoyée. `GET /health` indique
+`"push": true` une fois activé.
+
 ## Exploitation
 
 ```bash
@@ -111,8 +130,8 @@ fly deploy          # mettre à jour après modification de server.js
 
 Le healthcheck interroge `GET /health` toutes les 30 s ; Fly redémarre la
 machine s'il échoue. `GET /health` renvoie aussi l'uptime, le nombre de
-sessions et de sockets et l'horodatage du dernier snapshot — un `curl`
-suffit pour savoir si une nuit s'est bien passée.
+sessions et de sockets, l'horodatage du dernier snapshot et si le push est
+activé — un `curl` suffit pour savoir si une nuit s'est bien passée.
 
 Les lignes `[snapshot]` dans `fly logs` indiquent les écritures (une
 toutes les 30 s au plus, jamais à chaque point GPS) et, au démarrage, le

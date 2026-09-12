@@ -299,21 +299,25 @@ origin …`).
 - [ ] Graceful handling of disconnections
 - [ ] Error messages are helpful
 
-### Automated Testing (Future)
-```javascript
-// Backend tests
-describe('isPointInPolygon', () => {
-  it('should detect point inside triangle');
-  it('should detect point outside triangle');
-  it('should handle edge cases');
-});
+### Automated Testing
 
-// Frontend tests
-describe('Map component', () => {
-  it('should render without crashing');
-  it('should handle GPS updates');
-});
+Both suites exist and must pass before shipping (see `DISTRIBUTION.md`):
+
+- **Backend** — `node --test` spawns real server processes, because most of
+  what it asserts (restart recovery, `kill -9` mid-write, CORS, socket
+  lifecycle, ownership, re-arm, battery relay, push config) is only true
+  across a process boundary. `npm run test:unit` is the fast snapshot-only
+  subset.
+- **Frontend** — Jest (via `react-scripts test`) over the pure units: the
+  local alarm decision, GPS-fix quality, link-loss alarm, battery
+  classification, and the Web Push key helpers.
+
+```bash
+cd anchor-alarm-backend  && npm test
+cd anchor-alarm-frontend && npm test
 ```
+
+CI/CD to run both on every push is still on the roadmap below.
 
 ---
 

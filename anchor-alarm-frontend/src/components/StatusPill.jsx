@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import { gpsHealth } from '../utils/freshness';
+import { batteryLevelState, formatBatteryPct } from '../utils/battery';
 import AlarmDelayPicker from './AlarmDelayPicker';
 import './Chrome.css';
 
@@ -38,7 +39,10 @@ export default function StatusPill({
   armed,
   boatOffline,
   linkAlarmDelay,
-  onLinkAlarmDelayChange
+  onLinkAlarmDelayChange,
+  onTestAlarm,
+  testingAlarm,
+  battery
 }) {
   const t = useT();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -142,6 +146,39 @@ export default function StatusPill({
               <span className="status-sheet-name">{t('zoneLabel')}</span>
               <span className="status-sheet-detail">{armed ? t('sheetArmed') : t('sheetNotArmed')}</span>
             </div>
+            {/* Battery of the phone that IS the alarm. On a remote monitor
+                this is the boat's, relayed over the socket; on the boat, its
+                own. Shown only when known — a browser tab often cannot read
+                it, and unknown must not look like a warning. */}
+            {battery && (battery.level !== null || battery.charging !== null) && (
+              <div className="status-sheet-row">
+                {(() => {
+                  const s = batteryLevelState(battery);
+                  return dot(s === 'ok', s === 'low');
+                })()}
+                <span className="status-sheet-name">
+                  {mode === 'remote' ? t('sheetBoatBattery') : t('sheetBattery')}
+                </span>
+                <span className="status-sheet-detail">
+                  {formatBatteryPct(battery.level) ?? t('sheetBatteryUnknown')}
+                  {battery.charging ? ` · ${t('sheetCharging')}` : ''}
+                </span>
+              </div>
+            )}
+            {/* Rehearse the alarm on the boat phone: the one way to be sure
+                it is audible tonight is to have heard it (see
+                utils/audibility.js). Boat-only — a browser monitor has no
+                alarm-stream audio to test. */}
+            {mode !== 'remote' && onTestAlarm && (
+              <button
+                type="button"
+                className="status-sheet-test"
+                onClick={onTestAlarm}
+                disabled={testingAlarm}
+              >
+                {testingAlarm ? t('testAlarmPlaying') : t('testAlarm')}
+              </button>
+            )}
             {onLinkAlarmDelayChange && (
               <AlarmDelayPicker
                 value={linkAlarmDelay}

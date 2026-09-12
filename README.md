@@ -54,13 +54,26 @@ alarm still fires. Everything else in this repo exists to serve that.
   the alarm is already running.
 
   Two limits, both by design. A watcher phone with the app **backgrounded or
-  the screen off** will not alert to a *dragging* alarm: only the boat phone
-  runs a foreground service, and there are no push notifications (the
-  monitoring-gap alarm below is the one exception, because it can be
-  scheduled with the OS in advance). And the **hosted website never makes a
-  sound** — the alarm audio is a native Android plugin, so a browser tab
-  shows the alarm silently. The boat phone is the alarm; a watcher is a
-  second pair of eyes, not a second alarm clock.
+  the screen off** will not alert to a *dragging* alarm from the in-app
+  audio: only the boat phone runs a foreground service. And the **hosted
+  website never makes a sound** — the alarm audio is a native Android plugin,
+  so a browser tab shows the alarm silently. The boat phone is the alarm; a
+  watcher is a second pair of eyes, not a second alarm clock.
+
+  **Web Push (optional)** narrows the first limit for browser monitors: when
+  the backend is configured with VAPID keys, a browser watcher who grants
+  notification permission is woken by the OS for a *dragging* alarm even with
+  the tab backgrounded or closed. It is off unless configured, never applies
+  to the boat phone, and is a backup — not a substitute for the boat's own
+  alarm. See "Push notifications" under deployment below.
+- **Boat battery on the watch** — the boat phone is the alarm, so a flat
+  battery is the commonest way a watch silently ends. The boat warns on its
+  own screen when it drops below 20% (and 10%) unplugged, and shares its
+  battery level with every monitor ashore, shown in the status pill's sheet.
+- **Test the alarm** — a one-tap rehearsal in the boat's status sheet plays
+  the real alarm-stream audio for a couple of seconds and runs the audibility
+  check, so the alarm can be trusted because it has been heard — not because
+  the app said it was armed.
 - **Alarm on network loss, with a delay you choose** — a monitor whose link
   to the boat breaks is showing a map of where the boat *was*, which looks
   exactly like a boat riding quietly at anchor. So the gap now rings, and the
@@ -119,8 +132,8 @@ for the APK.
 ## 🧪 Tests
 
 ```bash
-cd anchor-alarm-backend  && npm test    # 97 tests
-cd anchor-alarm-frontend && npm test    # 97 tests
+cd anchor-alarm-backend  && npm test    # 119 tests
+cd anchor-alarm-frontend && npm test    # 168 tests
 ```
 
 The backend suite spawns real server processes rather than requiring the
@@ -145,9 +158,11 @@ and drives three outside their zones. It spawns its own server unless given
 anchor-alarm-backend/          Node + Express + Socket.io relay
   server.js                    sessions, geofence, CORS, rate limits
   snapshot.js                  crash-safe session persistence
+  push.js                      optional Web Push for browser monitors
   server-harness.js            spawns real servers for the tests
   *.test.js                    snapshot, restart, abuse, CORS, geofence,
-                               end-session, reconnect-sync, ownership
+                               end-session, reconnect-sync, ownership,
+                               rearm, battery, push
   scripts/load-sim.js          20-boat load simulation
   fly.toml, Dockerfile         deployment (single always-on machine)
 
@@ -155,11 +170,13 @@ anchor-alarm-frontend/         React 18 + Leaflet, and the Android app
   src/App.jsx                  session, GPS watcher, alarm, socket wiring
   src/components/              map, remote monitor, zone editor, dialogs
   src/utils/                   alarm decision, GPS fix quality, link-loss
-                               alarm, geo, track, platform, ids
+                               alarm, battery, web-push, geo, track,
+                               platform, ids
   src/*.test.js, src/utils/*.test.js
   android/                     Capacitor project
     .../AlarmAudioPlugin.java  alarm-stream audio + vibration
   public/service-worker.js     a tombstone that unregisters itself
+  public/push-sw.js            Web Push service worker (browser monitors)
 ```
 
 ## 🏗️ How it fits together
@@ -200,7 +217,7 @@ previous snapshot intact, never a truncated one.
 The events that carry meaning. The server also broadcasts the derived ones a
 client just applies — `state-update`, `location-updated`, `zone-updated`,
 `anchor-updated`, `track-point`, `track-reset`, `alarm-status-changed`,
-`alarm-acknowledged`, `client-joined`, `client-left`.
+`alarm-acknowledged`, `battery-updated`, `client-joined`, `client-left`.
 
 | Event | From | Meaning |
 | --- | --- | --- |
@@ -208,8 +225,10 @@ client just applies — `state-update`, `location-updated`, `zone-updated`,
 | `update-location` | main only | a GPS fix; the server thins it into the track. Relayed back with `ageMs`, an elapsed age measured on the server's clock, so watchers never subtract one device's clock from another's |
 | `update-zone` / `update-anchor` | main only | the zone or anchor changed |
 | `restore-track` | main only | bulk-restore a locally held track |
+| `update-battery` | main only | the boat phone's battery `{ level, charging }`, relayed to watchers as `battery-updated` so they can see the phone that IS the alarm running low |
 | `acknowledge-alarm` | main only | silence session-wide until the boat re-enters the zone. A watcher silencing its own device does not send this — it quiets that screen locally and the boat goes on sounding |
 | `end-session` | main only | the watch is over; session deleted |
+| `register-push` | remote only | a browser monitor's Web Push subscription, so a dragging alarm can wake a backgrounded tab. Ignored unless the backend has VAPID keys configured (see Deployment) |
 | `boat-offline` / `boat-online` | server | the boat phone's socket dropped / came back |
 | `session-ended` | server | the boat phone ended the watch |
 
@@ -225,9 +244,10 @@ deliberately.
 `alarm-status-changed` is for the watchers. The boat phone ignores it and
 uses its own local verdict — the server is never what makes it sound.
 
-HTTP is only `POST /api/sessions`, `GET /api/sessions/:id` and `GET /health`.
-There is no route for `/` — a bare visit to the backend returning
-`Cannot GET /` is Express answering, not a fault.
+HTTP is only `POST /api/sessions`, `GET /api/sessions/:id`, `GET /health`
+and `GET /api/push/vapid-public-key` (the Web Push key, or `null` when push
+is not configured). There is no route for `/` — a bare visit to the backend
+returning `Cannot GET /` is Express answering, not a fault.
 
 ## ☁️ Deployment
 
@@ -236,6 +256,29 @@ There is no route for `/` — a bare visit to the backend returning
   [`anchor-alarm-backend/DEPLOY_FLY.md`](anchor-alarm-backend/DEPLOY_FLY.md).
 - **Frontend** → Vercel, built from `anchor-alarm-frontend`.
 - **Android** → `npm run ship:android` (build + Firebase App Distribution).
+
+### Push notifications (optional)
+
+Web Push lets a **browser** monitor be woken for a dragging alarm while its
+tab is backgrounded or closed. It is entirely optional: with no keys set the
+backend exposes no usable key, the app never asks for notification
+permission, and nothing changes. The boat phone never uses it.
+
+To enable it, generate a VAPID key pair once and set three backend env vars:
+
+```bash
+npx web-push generate-vapid-keys
+# then, on the backend (e.g. `fly secrets set ...`):
+#   VAPID_PUBLIC_KEY=<public key>
+#   VAPID_PRIVATE_KEY=<private key>
+#   VAPID_SUBJECT=mailto:you@example.com   # a contact URI (mailto: or https:)
+```
+
+The frontend needs no build-time config — it fetches the public key from the
+backend at `/api/push/vapid-public-key` and offers push only when one is
+returned. `GET /health` reports `"push": true` once it is on. Native
+app monitors are excluded on purpose (Android WebView has no web push
+service, and the app already alerts while open); this is for browsers.
 
 > ⚠️ `anchor-alarm-frontend/.env.production` is committed and already holds
 > the right backend URL. A `REACT_APP_BACKEND_URL` set in the Vercel

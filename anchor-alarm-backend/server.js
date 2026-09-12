@@ -5,6 +5,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { readSnapshotSync, resolveDataDir, writeSnapshotSync } = require('./snapshot');
+const { configureWebPush, isValidSubscription, sendPush } = require('./push');
 
 const app = express();
 const server = http.createServer(app);
@@ -105,6 +106,11 @@ const debug = (...args) => {
 const sessions = new Map();
 
 const startedAt = Date.now();
+
+// Web Push for remote monitors (see push.js). Off unless VAPID keys are
+// configured, in which case the public key is exposed for browsers to
+// subscribe with. The boat phone never uses this — it is the alarm.
+const pushConfig = configureWebPush();
 
 // Expiry is based on last activity, NOT creation time — an earlier version
 // deleted every session one hour after it was created, so an overnight
@@ -417,6 +423,10 @@ app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
     // that IS the alarm, so watchers ashore can see it running low. Live
     // device state, so deliberately not snapshotted.
     battery: null,
+    // Web Push subscriptions of remote monitors, keyed by endpoint. Runtime
+    // only: browsers re-register on reconnect, and endpoints go stale, so
+    // there is nothing worth snapshotting.
+    pushSubs: {},
     track: [],
     createdAt: Date.now(),
     lastActivity: Date.now()
@@ -737,6 +747,36 @@ io.on('connection', (socket) => {
         alarmed: shouldAlarm,
         triggeredAt: new Date().toISOString()
       });
+
+      // Wake backgrounded browser monitors. Only on the transition INTO the
+      // alarm, so a watcher is not re-pushed on every fix while the boat
+      // stays outside; never on the clear. Fire-and-forget, and it prunes
+      // the endpoints the browser has dropped. See push.js / push-sw.js.
+      if (shouldAlarm && pushConfig.enabled && session.pushSubs) {
+        const subscriptions = Object.values(session.pushSubs);
+        if (subscriptions.length) {
+          sendPush({
+            subscriptions,
+            payload: {
+              title: '🚨 ANCHOR ALARM',
+              body: 'The boat has left the anchor zone.',
+              sessionId: socket.sessionId
+            },
+            onExpired: (endpoint) => {
+              if (endpoint && session.pushSubs) delete session.pushSubs[endpoint];
+            }
+          })
+            .then((r) => {
+              if (r.sent || r.expired || r.failed) {
+                console.log(
+                  `${tag(socket.sessionId)} alarm push: sent ${r.sent}, ` +
+                    `pruned ${r.expired}, failed ${r.failed}`
+                );
+              }
+            })
+            .catch((err) => console.warn('[push] send failed:', err && err.message));
+        }
+      }
     }
   });
 
@@ -760,6 +800,25 @@ io.on('connection', (socket) => {
     session.battery = battery;
     touchSession(session);
     io.to(socket.sessionId).emit('battery-updated', { battery });
+  });
+
+  // A remote monitor registering for Web Push, so a dragging alarm reaches
+  // it even with the browser tab backgrounded or closed (see push.js). The
+  // boat phone is never a push target — it is the alarm. No-op unless push
+  // is configured, and the subscription is validated before it is stored.
+  socket.on('register-push', (data) => {
+    if (!pushConfig.enabled) return;
+    if (!socket.sessionId || socket.role === 'main') return;
+    const session = sessions.get(socket.sessionId);
+    if (!session) return;
+
+    const sub = data && data.subscription;
+    if (!isValidSubscription(sub)) return;
+
+    if (!session.pushSubs) session.pushSubs = {};
+    session.pushSubs[sub.endpoint] = sub;
+    touchSession(session);
+    debug(`${tag(socket.sessionId, socket.deviceId)} registered for push`);
   });
 
   // End the session deliberately — the boat phone closing the watch.
@@ -882,6 +941,12 @@ const shutdown = (signal) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// The VAPID public key a browser needs to subscribe for Web Push, or null
+// when push is not configured — in which case the frontend never offers it.
+app.get('/api/push/vapid-public-key', (req, res) => {
+  res.json({ key: pushConfig.enabled ? pushConfig.publicKey : null });
+});
+
 // Health check. Doubles as the beta's one-line status page — a single curl
 // answers "is it up, does it still have my session, and is it snapshotting".
 app.get('/health', (req, res) => {
@@ -891,6 +956,7 @@ app.get('/health', (req, res) => {
     uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
     sessions: sessions.size,
     sockets: io.engine.clientsCount,
+    push: pushConfig.enabled,
     lastSnapshotAt: lastSnapshotAt ? new Date(lastSnapshotAt).toISOString() : null,
     dataDir: DATA_DIR,
     // The effective browser allowlist. `fly secrets list` shows only names

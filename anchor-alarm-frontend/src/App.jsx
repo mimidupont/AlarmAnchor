@@ -35,6 +35,7 @@ import { stampAllReceivedAt, stampReceivedAt } from './utils/freshness';
 import { acceptFix, bestRecentFix, emptyFixFilter, pruneFixes } from './utils/gpsQuality';
 import { alarmAudibility } from './utils/audibility';
 import { batteryLevelState, normalizeBattery } from './utils/battery';
+import { isWebPushSupported, urlBase64ToUint8Array } from './utils/push';
 import {
   linkAlarmDelayMs,
   linkAlarmDueIn,
@@ -841,6 +842,66 @@ export default function App() {
     if (batteryLevelState(batteryInfo || {}) === 'ok') setBatteryWarnDismissed(false);
   }, [batteryInfo]);
 
+  // Web Push subscription for a browser monitor, so a dragging alarm reaches
+  // it even when the tab is backgrounded — the one gap a browser watcher has
+  // (it makes no sound and cannot run the in-app alert once hidden). Kept in
+  // a ref so it can be re-registered after a socket reconnect. See
+  // utils/push.js, public/push-sw.js and the backend push.js.
+  const pushSubRef = useRef(null);
+  const pushSetupDone = useRef(false);
+
+  const registerRemotePush = async () => {
+    // Already subscribed this run — just make sure the server still has it.
+    if (pushSetupDone.current) {
+      if (pushSubRef.current && socketRef.current?.connected) {
+        socketRef.current.emit('register-push', { subscription: pushSubRef.current });
+      }
+      return;
+    }
+    if (!isWebPushSupported({ nativePlatform: Capacitor.isNativePlatform() })) return;
+    try {
+      // Ask the server whether push is configured at all; a null key means
+      // the deployment has no VAPID keys and we must not offer it.
+      const res = await fetch(`${BACKEND_URL}/api/push/vapid-public-key`);
+      const { key } = await res.json();
+      if (!key) return;
+
+      if (Notification.permission === 'denied') return;
+      if (Notification.permission === 'default') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') return;
+      }
+
+      const registration = await navigator.serviceWorker.register('/push-sw.js');
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(key)
+        });
+      }
+
+      const json = subscription.toJSON ? subscription.toJSON() : subscription;
+      pushSubRef.current = json;
+      pushSetupDone.current = true;
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('register-push', { subscription: json });
+      }
+    } catch (err) {
+      // Unsupported, permission refused, or the push service was unreachable.
+      // The watcher still has the in-app alert while the tab is open.
+      console.warn('Web Push setup failed:', err);
+    }
+  };
+
+  // Set push up once this device is actually a remote monitor. Idempotent —
+  // getSubscription reuses an existing one — and re-emits to the server on
+  // return, which also covers a socket that dropped and came back.
+  useEffect(() => {
+    if (view === 'remote') registerRemotePush();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
   // Session recovery on the boat phone.
   //
   // The server losing our session — a deploy, a Fly host migration, an OOM,
@@ -938,6 +999,12 @@ export default function App() {
         // for a socket that is not yet in any session.
         if (sessionRef.current.role === 'main') {
           pushLocalState(newSocket);
+        }
+        // A remote's push subscription lives on the session, which a restart
+        // clears — re-register it on every reconnect so the alarm keeps
+        // reaching a backgrounded tab.
+        if (sessionRef.current.role === 'remote' && pushSubRef.current) {
+          newSocket.emit('register-push', { subscription: pushSubRef.current });
         }
       } else if (joinParamRef.current) {
         // Arrived via a scanned QR link (?join=<ID>): join as remote

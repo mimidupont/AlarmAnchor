@@ -54,13 +54,26 @@ alarm still fires. Everything else in this repo exists to serve that.
   the alarm is already running.
 
   Two limits, both by design. A watcher phone with the app **backgrounded or
-  the screen off** will not alert to a *dragging* alarm: only the boat phone
-  runs a foreground service, and there are no push notifications (the
-  monitoring-gap alarm below is the one exception, because it can be
-  scheduled with the OS in advance). And the **hosted website never makes a
-  sound** — the alarm audio is a native Android plugin, so a browser tab
-  shows the alarm silently. The boat phone is the alarm; a watcher is a
-  second pair of eyes, not a second alarm clock.
+  the screen off** will not alert to a *dragging* alarm from the in-app
+  audio: only the boat phone runs a foreground service. And the **hosted
+  website never makes a sound** — the alarm audio is a native Android plugin,
+  so a browser tab shows the alarm silently. The boat phone is the alarm; a
+  watcher is a second pair of eyes, not a second alarm clock.
+
+  **Web Push (optional)** narrows the first limit for browser monitors: when
+  the backend is configured with VAPID keys, a browser watcher who grants
+  notification permission is woken by the OS for a *dragging* alarm even with
+  the tab backgrounded or closed. It is off unless configured, never applies
+  to the boat phone, and is a backup — not a substitute for the boat's own
+  alarm. See "Push notifications" under deployment below.
+- **Boat battery on the watch** — the boat phone is the alarm, so a flat
+  battery is the commonest way a watch silently ends. The boat warns on its
+  own screen when it drops below 20% (and 10%) unplugged, and shares its
+  battery level with every monitor ashore, shown in the status pill's sheet.
+- **Test the alarm** — a one-tap rehearsal in the boat's status sheet plays
+  the real alarm-stream audio for a couple of seconds and runs the audibility
+  check, so the alarm can be trusted because it has been heard — not because
+  the app said it was armed.
 - **Alarm on network loss, with a delay you choose** — a monitor whose link
   to the boat breaks is showing a map of where the boat *was*, which looks
   exactly like a boat riding quietly at anchor. So the gap now rings, and the
@@ -236,6 +249,29 @@ There is no route for `/` — a bare visit to the backend returning
   [`anchor-alarm-backend/DEPLOY_FLY.md`](anchor-alarm-backend/DEPLOY_FLY.md).
 - **Frontend** → Vercel, built from `anchor-alarm-frontend`.
 - **Android** → `npm run ship:android` (build + Firebase App Distribution).
+
+### Push notifications (optional)
+
+Web Push lets a **browser** monitor be woken for a dragging alarm while its
+tab is backgrounded or closed. It is entirely optional: with no keys set the
+backend exposes no usable key, the app never asks for notification
+permission, and nothing changes. The boat phone never uses it.
+
+To enable it, generate a VAPID key pair once and set three backend env vars:
+
+```bash
+npx web-push generate-vapid-keys
+# then, on the backend (e.g. `fly secrets set ...`):
+#   VAPID_PUBLIC_KEY=<public key>
+#   VAPID_PRIVATE_KEY=<private key>
+#   VAPID_SUBJECT=mailto:you@example.com   # a contact URI (mailto: or https:)
+```
+
+The frontend needs no build-time config — it fetches the public key from the
+backend at `/api/push/vapid-public-key` and offers push only when one is
+returned. `GET /health` reports `"push": true` once it is on. Native
+app monitors are excluded on purpose (Android WebView has no web push
+service, and the app already alerts while open); this is for browsers.
 
 > ⚠️ `anchor-alarm-frontend/.env.production` is committed and already holds
 > the right backend URL. A `REACT_APP_BACKEND_URL` set in the Vercel

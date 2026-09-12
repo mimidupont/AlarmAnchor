@@ -32,7 +32,7 @@ const ANCHOR_ICON = L.divIcon({
   popupAnchor: [0, -15]
 });
 
-export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected, boatOffline, track, linkAlarmDelay, onLinkAlarmDelayChange }) {
+export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBack, alarmed, theme, onCycleTheme, connected, boatOffline, track, linkAlarmDelay, onLinkAlarmDelayChange, boatBattery }) {
   const t = useT();
   // Track visibility: All → 1 h → Off, persisted like the theme.
   const [trackMode, setTrackMode] = useState(() => {
@@ -330,6 +330,7 @@ export default function RemoteMonitor({ zone, locations, sessionId, anchor, onBa
             armed={armed}
             linkAlarmDelay={linkAlarmDelay}
             onLinkAlarmDelayChange={onLinkAlarmDelayChange}
+            battery={boatBattery}
           />
         }
       />

@@ -20,6 +20,7 @@ import ConfirmDialog from './components/ConfirmDialog';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Geolocation } from '@capacitor/geolocation';
+import { Device } from '@capacitor/device';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import {
   RECOVERY_MIN_INTERVAL_MS,
@@ -33,6 +34,7 @@ import { forgetWatch, loadWatch, pruneOrphanTracks, saveWatch } from './utils/wa
 import { stampAllReceivedAt, stampReceivedAt } from './utils/freshness';
 import { acceptFix, bestRecentFix, emptyFixFilter, pruneFixes } from './utils/gpsQuality';
 import { alarmAudibility } from './utils/audibility';
+import { batteryLevelState, normalizeBattery } from './utils/battery';
 import {
   linkAlarmDelayMs,
   linkAlarmDueIn,
@@ -156,6 +158,15 @@ export default function App() {
   // warns immediately and only escalates to a modal if the silence lasts.
   const [boatOffline, setBoatOffline] = useState(false);
   const [monitoringStopped, setMonitoringStopped] = useState(false);
+  // This device's own battery (the boat phone shares it so watchers ashore
+  // can see the phone that IS the alarm running low), and the battery the
+  // boat last reported (shown on a remote monitor). See utils/battery.js.
+  const [batteryInfo, setBatteryInfo] = useState(null);
+  const [boatBattery, setBoatBattery] = useState(null);
+  // Dismissed once per low-battery episode so the banner does not nag on
+  // every 60 s sample; re-armed when the phone is charged back above the
+  // threshold or plugged in.
+  const [batteryWarnDismissed, setBatteryWarnDismissed] = useState(false);
   // When the current monitoring gap started (either half of the link), or
   // null while the boat is being watched normally. Drives the one timer
   // that decides when the gap becomes an alarm.
@@ -779,6 +790,57 @@ export default function App() {
     }
   }, []);
 
+  // Read the phone's battery. Native first (reliable with the screen off),
+  // the web Battery API as a fallback, and null when neither can answer —
+  // which reads as "unknown", never as empty (see utils/battery.js).
+  const readBattery = async () => {
+    try {
+      const info = normalizeBattery(await Device.getBatteryInfo());
+      if (info) return info;
+    } catch (err) {
+      // Unimplemented on the web build, or an APK without the plugin.
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.getBattery) {
+        const b = await navigator.getBattery();
+        return normalizeBattery({ level: b.level, charging: b.charging });
+      }
+    } catch (err) {
+      // No web Battery API either.
+    }
+    return null;
+  };
+
+  // The boat phone is the alarm, so its own battery is part of the watch: a
+  // flat battery is the commonest way the watch silently ends. Sample it
+  // while on watch and share it with the monitors ashore, so they see the
+  // phone running low while there is still time to say something.
+  useEffect(() => {
+    if (view !== 'main') return undefined;
+    let cancelled = false;
+    const sample = async () => {
+      const info = await readBattery();
+      if (cancelled || !info) return;
+      setBatteryInfo(info);
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('update-battery', { battery: info });
+      }
+    };
+    sample();
+    const timer = setInterval(sample, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // Re-arm the low-battery banner once the phone is charging or back above
+  // the threshold, so a genuinely new low warns again.
+  useEffect(() => {
+    if (batteryLevelState(batteryInfo || {}) === 'ok') setBatteryWarnDismissed(false);
+  }, [batteryInfo]);
+
   // Session recovery on the boat phone.
   //
   // The server losing our session — a deploy, a Fly host migration, an OOM,
@@ -1002,6 +1064,9 @@ export default function App() {
         trackRef.current = data.track;
         setTrack(data.track);
       }
+      // The boat's last known battery, so a monitor joining mid-watch sees
+      // it at once rather than waiting for the next sample.
+      if (!isMain && data.battery) setBoatBattery(normalizeBattery(data.battery));
     });
 
     newSocket.on('track-point', (data) => {
@@ -1072,6 +1137,12 @@ export default function App() {
     newSocket.on('boat-online', () => {
       if (sessionRef.current?.role === 'main') return;
       setBoatOffline(false);
+    });
+
+    // The boat phone's battery, relayed to the monitors ashore.
+    newSocket.on('battery-updated', (data) => {
+      if (sessionRef.current?.role === 'main') return;
+      if (data && data.battery) setBoatBattery(normalizeBattery(data.battery));
     });
 
     newSocket.on('session-ended', () => {
@@ -1731,6 +1802,25 @@ export default function App() {
         </div>
       )}
 
+      {/* The boat phone is running low. Dismissible, not modal: charging is
+          the fix and the map must stay usable meanwhile. A flat battery is
+          the commonest way the watch silently ends (see utils/battery.js).
+          Only on the boat, and only while unplugged. */}
+      {view === 'main' && !batteryWarnDismissed &&
+        batteryLevelState(batteryInfo || {}) !== 'ok' && (
+        <div className={
+          batteryLevelState(batteryInfo || {}) === 'critical' ? 'error-banner' : 'notice-banner'
+        }>
+          🪫 {t(
+            batteryLevelState(batteryInfo || {}) === 'critical'
+              ? 'batteryCriticalWarning'
+              : 'batteryLowWarning',
+            { pct: Math.round((batteryInfo?.level ?? 0) * 100) }
+          )}
+          <button onClick={() => setBatteryWarnDismissed(true)}>×</button>
+        </div>
+      )}
+
       {/* Alarm takeover */}
       {alarmed && (
         <AlarmNotification
@@ -1879,6 +1969,7 @@ export default function App() {
           onLinkAlarmDelayChange={changeLinkAlarmDelay}
           onTestAlarm={handleTestAlarm}
           testingAlarm={testingAlarm}
+          battery={batteryInfo}
           onBack={() => requestLeaveSession(leaveMainSession)}
         />
       )}
@@ -1898,6 +1989,7 @@ export default function App() {
           track={track}
           linkAlarmDelay={linkAlarmDelay}
           onLinkAlarmDelayChange={changeLinkAlarmDelay}
+          boatBattery={boatBattery}
           onBack={() => requestLeaveSession(leaveRemoteSession)}
         />
       )}

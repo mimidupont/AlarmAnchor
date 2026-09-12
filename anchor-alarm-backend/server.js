@@ -413,6 +413,10 @@ app.post('/api/sessions', sessionCreateLimiter, (req, res) => {
     // the zone (re-arming), instead of re-firing on every GPS fix.
     acknowledged: false,
     anchor: null,
+    // The boat phone's last reported battery { level, charging } — the phone
+    // that IS the alarm, so watchers ashore can see it running low. Live
+    // device state, so deliberately not snapshotted.
+    battery: null,
     track: [],
     createdAt: Date.now(),
     lastActivity: Date.now()
@@ -571,7 +575,10 @@ io.on('connection', (socket) => {
       locations: locationsWithAge(session.locations),
       alarmed: session.alarmed,
       anchor: session.anchor,
-      track: session.track
+      track: session.track,
+      // The boat's last known battery, so a monitor joining mid-watch sees
+      // the phone that IS the alarm running low without waiting for a sample.
+      battery: session.battery || null
     });
 
     // Notify others in session. clientId is kept alongside deviceId for one
@@ -731,6 +738,28 @@ io.on('connection', (socket) => {
         triggeredAt: new Date().toISOString()
       });
     }
+  });
+
+  // Battery report from the boat phone, relayed to the monitors ashore.
+  // Boat-only: a watcher's own battery is nobody else's business, and only
+  // the boat's matters to the watch. Validated so a stray client cannot push
+  // a bogus level onto every monitor's status pill.
+  socket.on('update-battery', (data) => {
+    if (!requireBoat(socket, 'update-battery')) return;
+    const session = sessions.get(socket.sessionId);
+    if (!session) return;
+
+    const raw = data && data.battery;
+    if (!raw || typeof raw !== 'object') return;
+    const level =
+      Number.isFinite(raw.level) && raw.level >= 0 && raw.level <= 1 ? raw.level : null;
+    const charging = typeof raw.charging === 'boolean' ? raw.charging : null;
+    if (level === null && charging === null) return;
+
+    const battery = { level, charging, at: new Date().toISOString() };
+    session.battery = battery;
+    touchSession(session);
+    io.to(socket.sessionId).emit('battery-updated', { battery });
   });
 
   // End the session deliberately — the boat phone closing the watch.

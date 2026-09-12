@@ -132,8 +132,8 @@ for the APK.
 ## 🧪 Tests
 
 ```bash
-cd anchor-alarm-backend  && npm test    # 97 tests
-cd anchor-alarm-frontend && npm test    # 97 tests
+cd anchor-alarm-backend  && npm test    # 119 tests
+cd anchor-alarm-frontend && npm test    # 168 tests
 ```
 
 The backend suite spawns real server processes rather than requiring the
@@ -158,9 +158,11 @@ and drives three outside their zones. It spawns its own server unless given
 anchor-alarm-backend/          Node + Express + Socket.io relay
   server.js                    sessions, geofence, CORS, rate limits
   snapshot.js                  crash-safe session persistence
+  push.js                      optional Web Push for browser monitors
   server-harness.js            spawns real servers for the tests
   *.test.js                    snapshot, restart, abuse, CORS, geofence,
-                               end-session, reconnect-sync, ownership
+                               end-session, reconnect-sync, ownership,
+                               rearm, battery, push
   scripts/load-sim.js          20-boat load simulation
   fly.toml, Dockerfile         deployment (single always-on machine)
 
@@ -168,11 +170,13 @@ anchor-alarm-frontend/         React 18 + Leaflet, and the Android app
   src/App.jsx                  session, GPS watcher, alarm, socket wiring
   src/components/              map, remote monitor, zone editor, dialogs
   src/utils/                   alarm decision, GPS fix quality, link-loss
-                               alarm, geo, track, platform, ids
+                               alarm, battery, web-push, geo, track,
+                               platform, ids
   src/*.test.js, src/utils/*.test.js
   android/                     Capacitor project
     .../AlarmAudioPlugin.java  alarm-stream audio + vibration
   public/service-worker.js     a tombstone that unregisters itself
+  public/push-sw.js            Web Push service worker (browser monitors)
 ```
 
 ## 🏗️ How it fits together
@@ -213,7 +217,7 @@ previous snapshot intact, never a truncated one.
 The events that carry meaning. The server also broadcasts the derived ones a
 client just applies — `state-update`, `location-updated`, `zone-updated`,
 `anchor-updated`, `track-point`, `track-reset`, `alarm-status-changed`,
-`alarm-acknowledged`, `client-joined`, `client-left`.
+`alarm-acknowledged`, `battery-updated`, `client-joined`, `client-left`.
 
 | Event | From | Meaning |
 | --- | --- | --- |
@@ -221,8 +225,10 @@ client just applies — `state-update`, `location-updated`, `zone-updated`,
 | `update-location` | main only | a GPS fix; the server thins it into the track. Relayed back with `ageMs`, an elapsed age measured on the server's clock, so watchers never subtract one device's clock from another's |
 | `update-zone` / `update-anchor` | main only | the zone or anchor changed |
 | `restore-track` | main only | bulk-restore a locally held track |
+| `update-battery` | main only | the boat phone's battery `{ level, charging }`, relayed to watchers as `battery-updated` so they can see the phone that IS the alarm running low |
 | `acknowledge-alarm` | main only | silence session-wide until the boat re-enters the zone. A watcher silencing its own device does not send this — it quiets that screen locally and the boat goes on sounding |
 | `end-session` | main only | the watch is over; session deleted |
+| `register-push` | remote only | a browser monitor's Web Push subscription, so a dragging alarm can wake a backgrounded tab. Ignored unless the backend has VAPID keys configured (see Deployment) |
 | `boat-offline` / `boat-online` | server | the boat phone's socket dropped / came back |
 | `session-ended` | server | the boat phone ended the watch |
 
@@ -238,9 +244,10 @@ deliberately.
 `alarm-status-changed` is for the watchers. The boat phone ignores it and
 uses its own local verdict — the server is never what makes it sound.
 
-HTTP is only `POST /api/sessions`, `GET /api/sessions/:id` and `GET /health`.
-There is no route for `/` — a bare visit to the backend returning
-`Cannot GET /` is Express answering, not a fault.
+HTTP is only `POST /api/sessions`, `GET /api/sessions/:id`, `GET /health`
+and `GET /api/push/vapid-public-key` (the Web Push key, or `null` when push
+is not configured). There is no route for `/` — a bare visit to the backend
+returning `Cannot GET /` is Express answering, not a fault.
 
 ## ☁️ Deployment
 

@@ -5,8 +5,10 @@
 ```
 anchor-alarm-backend/
 ├── server.js          # Express server with Socket.io
+├── snapshot.js        # crash-safe session persistence
+├── push.js            # optional Web Push for browser monitors
 ├── package.json       # Dependencies
-└── README.md
+└── DEPLOY_FLY.md      # Fly.io deployment guide
 
 anchor-alarm-frontend/
 ├── src/
@@ -31,7 +33,8 @@ anchor-alarm-frontend/
 ## 🚀 Local Development (Windows + Testing)
 
 ### Prerequisites
-- Node.js 14+ ([download](https://nodejs.org/))
+- Node.js 18+ (20+ recommended; the backend test runner and global `fetch`
+  need 18 as a hard floor, and production runs Node 22) ([download](https://nodejs.org/))
 - npm (comes with Node.js)
 - Git (optional, for version control)
 
@@ -128,24 +131,20 @@ Since you're testing on Windows without a real phone:
 
 ### Option B: Native App (Recommended for Production)
 
-Use **Expo** to convert React app to Android APK:
+This project ships the native Android app with **Capacitor** (not Expo): the
+same React app runs inside a WebView, with a foreground-service GPS watcher
+and native alarm-stream audio that a browser cannot provide. Building it is a
+single wrapped command:
 
 ```bash
-# Install Expo CLI
-npm install -g expo-cli
-
-# In frontend folder
 cd anchor-alarm-frontend
-npx create-expo-app .
-
-# Add Socket.io to Expo
-npm install socket.io-client expo-location
-
-# Build APK
-expo build:android
-
-# Download APK and install on phone
+npm install
+npm run android          # web build + cap sync + open Android Studio, then ▶ Run
 ```
+
+See [`ANDROID_BUILD.md`](ANDROID_BUILD.md) for why `cap sync` is mandatory on
+a fresh clone, and [`DISTRIBUTION.md`](DISTRIBUTION.md) for producing and
+distributing a release APK.
 
 ---
 
@@ -281,7 +280,7 @@ npm run build
 - [ ] Can join session on another browser tab
 - [ ] Can draw zone on map
 - [ ] Zone syncs to remote monitor
-- [ ] GPS position updates every 10 seconds
+- [ ] GPS position updates as fixes arrive
 - [ ] Alarm triggers when boat leaves zone
 - [ ] Notification and sound work
 - [ ] Can acknowledge alarm
@@ -304,7 +303,11 @@ lsof -i :5000
 - Check backend URL in `.env` file
 - Ensure backend is running
 - Check browser console for CORS errors
-- Backend CORS is already configured for all origins
+- The backend uses a **strict CORS allowlist**, not "all origins": a browser
+  loading the app from an origin that is not listed is blocked (native APK
+  clients send no `Origin` header and are unaffected). Add your frontend
+  origin via `ALLOWED_ORIGINS`, and check `fly logs` for
+  `[cors] rejected origin …`. See `anchor-alarm-backend/DEPLOY_FLY.md`.
 
 ### GPS not working
 - Browser needs HTTPS for geolocation (except localhost)
@@ -325,7 +328,9 @@ lsof -i :5000
 
 ## 📊 Performance Notes
 
-- **GPS Polling**: 10 seconds (configurable in App.jsx)
+- **GPS Updates**: continuous — a foreground-service watcher delivers fixes
+  as the OS produces them (not a fixed poll); implausible fixes are filtered
+  (see `src/utils/gpsQuality.js`)
 - **Zone Sync**: Real-time via Socket.io
 - **Location Sync**: Real-time to all connected clients
 - **Memory**: in-memory sessions, expiring after **24 h of inactivity** —
@@ -357,10 +362,9 @@ lsof -i :5000
    npm install crypto
    ```
 
-3. Rate limiting:
-   ```bash
-   npm install express-rate-limit
-   ```
+3. Rate limiting — **already implemented**: the backend uses
+   `express-rate-limit` on session creation (`SESSION_RATE_LIMIT`, per IP/hour)
+   plus a per-socket join budget. See `server.js`.
 
 4. Use HTTPS only (mandatory for geolocation on production)
 
@@ -371,7 +375,7 @@ lsof -i :5000
 Once working as web app:
 
 1. Create privacy policy
-2. Build proper APK via Expo/React Native
+2. Build a release APK/AAB via Capacitor (see `DISTRIBUTION.md`)
 3. Create app icons and screenshots
 4. Sign up for Google Play Developer ($25)
 5. Upload APK and metadata

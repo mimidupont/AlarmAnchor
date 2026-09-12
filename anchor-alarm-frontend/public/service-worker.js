@@ -16,10 +16,12 @@
  *     window (no worker registered) always worked, which is what makes this
  *     so confusing to diagnose.
  *
- * Nothing in the app registers a service worker any more: notifications go
- * through Capacitor LocalNotifications, and no source file references
- * navigator.serviceWorker at all. But a registration made by an older build
- * lives forever until something replaces it, which is what this file is.
+ * The app's own alarms go through Capacitor LocalNotifications, not a service
+ * worker. The one worker the app does register lives at a DIFFERENT path
+ * ('/push-sw.js', the optional Web Push worker for browser monitors) — never
+ * this one, whose only job is to remove itself. A registration made by the
+ * old cache-first build at THIS path lives forever until something replaces
+ * it, which is what this file is.
  *
  * It must keep being served at this exact path. Deleting it would leave
  * every already-registered device stuck: browsers do not reliably drop a

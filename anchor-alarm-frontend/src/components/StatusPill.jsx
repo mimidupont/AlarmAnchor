@@ -38,7 +38,9 @@ export default function StatusPill({
   armed,
   boatOffline,
   linkAlarmDelay,
-  onLinkAlarmDelayChange
+  onLinkAlarmDelayChange,
+  onTestAlarm,
+  testingAlarm
 }) {
   const t = useT();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -142,6 +144,20 @@ export default function StatusPill({
               <span className="status-sheet-name">{t('zoneLabel')}</span>
               <span className="status-sheet-detail">{armed ? t('sheetArmed') : t('sheetNotArmed')}</span>
             </div>
+            {/* Rehearse the alarm on the boat phone: the one way to be sure
+                it is audible tonight is to have heard it (see
+                utils/audibility.js). Boat-only — a browser monitor has no
+                alarm-stream audio to test. */}
+            {mode !== 'remote' && onTestAlarm && (
+              <button
+                type="button"
+                className="status-sheet-test"
+                onClick={onTestAlarm}
+                disabled={testingAlarm}
+              >
+                {testingAlarm ? t('testAlarmPlaying') : t('testAlarm')}
+              </button>
+            )}
             {onLinkAlarmDelayChange && (
               <AlarmDelayPicker
                 value={linkAlarmDelay}

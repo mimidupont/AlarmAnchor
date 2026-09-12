@@ -157,6 +157,24 @@
   cursor: pointer;
 }
 
+.status-sheet-test {
+  margin-top: 14px;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.status-sheet-test:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ---- Instrument panel ---- */
 
 .instrument-panel {

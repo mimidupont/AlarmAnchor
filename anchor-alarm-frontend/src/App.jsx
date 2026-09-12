@@ -181,6 +181,10 @@ export default function App() {
   // will be silent. Checked when the watch is armed — while the boat is
   // still safely at anchor — and again whenever the alarm actually fires.
   const [alarmMuted, setAlarmMuted] = useState(false);
+  // True while a user-requested alarm rehearsal is playing (see
+  // handleTestAlarm) — drives the button label and blocks a second tap.
+  const [testingAlarm, setTestingAlarm] = useState(false);
+  const testAlarmTimer = useRef(null);
   // Set to the new session ID after a successful recovery, so the user can
   // re-share the code. Dismissible, and deliberately never a modal — the
   // map must stay usable.
@@ -722,6 +726,58 @@ export default function App() {
       console.warn('Could not cancel the alarm notification:', err);
     }
   };
+
+  // A user-requested rehearsal of the alarm: play the real alarm-stream
+  // audio for a couple of seconds so the skipper can confirm — while the
+  // boat is still safely at anchor — that it is actually audible tonight.
+  // Alarm-stream volume at zero is the one setting that silences the whole
+  // watch while everything on screen still looks armed (see
+  // utils/audibility.js), and the surest way to trust an alarm is to have
+  // heard it. Deliberately NOT triggerAlarmSequence: no takeover screen, no
+  // looping notification, no alarm state — just the noise and the same
+  // audibility check that arming runs.
+  const handleTestAlarm = async () => {
+    // Never let a rehearsal touch a real alarm: if one is already sounding
+    // (dragging or a monitoring gap), do nothing, so the auto-stop below can
+    // never silence the genuine article.
+    if (alarmedRef.current || linkAlarmSounding.current || testingAlarm) return;
+    setTestingAlarm(true);
+    try {
+      const status = await AlarmAudio.start();
+      applyAudibility(status);
+    } catch (err) {
+      // Web, or an APK without the plugin — nothing to rehearse. Leave the
+      // muted banner alone: unknown is not muted.
+      console.warn('Test alarm audio unavailable:', err);
+    }
+    try {
+      await Haptics.impact({ style: ImpactStyle.Heavy });
+    } catch (err) {
+      // Haptics optional.
+    }
+    clearTimeout(testAlarmTimer.current);
+    testAlarmTimer.current = setTimeout(async () => {
+      // If a real alarm started during the rehearsal, leave the noise
+      // running — it is now the genuine article, not the test.
+      if (!alarmedRef.current && !linkAlarmSounding.current) {
+        try {
+          await AlarmAudio.stop();
+        } catch (err) {
+          // Nothing was playing.
+        }
+      }
+      setTestingAlarm(false);
+    }, 2500);
+  };
+
+  // A rehearsal must not outlive the screen: stop the noise and drop the
+  // timer if the app unmounts mid-test.
+  useEffect(() => () => {
+    clearTimeout(testAlarmTimer.current);
+    if (!alarmedRef.current && !linkAlarmSounding.current) {
+      AlarmAudio.stop().catch(() => {});
+    }
+  }, []);
 
   // Session recovery on the boat phone.
   //
@@ -1821,6 +1877,8 @@ export default function App() {
           track={track}
           linkAlarmDelay={linkAlarmDelay}
           onLinkAlarmDelayChange={changeLinkAlarmDelay}
+          onTestAlarm={handleTestAlarm}
+          testingAlarm={testingAlarm}
           onBack={() => requestLeaveSession(leaveMainSession)}
         />
       )}

@@ -111,6 +111,8 @@ export const strings = {
     sheetFixAgo: 'Fix {s}s ago',
     sheetNoFix: 'No fix yet',
     sheetError: 'Error: {msg}',
+    testAlarm: '🔊 Test the alarm',
+    testAlarmPlaying: 'Playing…',
     close: 'Close',
 
     // Move anchor
@@ -276,6 +278,8 @@ export const strings = {
     sheetFixAgo: 'Fix il y a {s}s',
     sheetNoFix: 'Aucun fix',
     sheetError: 'Erreur : {msg}',
+    testAlarm: "🔊 Tester l'alarme",
+    testAlarmPlaying: 'Lecture…',
     close: 'Fermer',
 
     // Move anchor

@@ -68,7 +68,7 @@ const RESHAPED_TOLERANCE_M = 2;
 // polygon sits at worst ~3% inside the nominal radius, far below GPS noise.
 const SHAPE_STEPS = 12;
 
-export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, track, alarmed, theme, onCycleTheme, connected, gpsError, linkAlarmDelay, onLinkAlarmDelayChange }) {
+export default function Map({ zone, locations, sessionId, onZoneUpdate, role, onBack, anchor, onDropAnchor, onClearAnchor, onAnchorUpdate, track, alarmed, theme, onCycleTheme, connected, gpsError, linkAlarmDelay, onLinkAlarmDelayChange, onTestAlarm, testingAlarm }) {
   const t = useT();
   // Track visibility: All → 1 h → Off, persisted like the theme.
   const [trackMode, setTrackMode] = useState(() => {
@@ -784,6 +784,8 @@ export default function Map({ zone, locations, sessionId, onZoneUpdate, role, on
             armed={armed}
             linkAlarmDelay={linkAlarmDelay}
             onLinkAlarmDelayChange={onLinkAlarmDelayChange}
+            onTestAlarm={onTestAlarm}
+            testingAlarm={testingAlarm}
           />
         }
       />

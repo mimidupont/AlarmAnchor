@@ -1,0 +1,157 @@
+name: Android release → Firebase
+
+# Builds the signed release APK and pushes it to Firebase App Distribution
+# with no local command. Runs on every merge to main that touches app code,
+# and on demand from the Actions tab (with optional release notes).
+#
+# It replaces running `npm run ship:android` by hand — the same steps
+# (android:prepare → assembleRelease → appdistribution) run on a GitHub
+# runner instead of your laptop, so the keystore, the JDK and the Android
+# SDK live in CI rather than needing to be present on the machine that
+# happens to be building.
+#
+# ONE-TIME SETUP — add these under Settings → Secrets and variables →
+# Actions (see DISTRIBUTION.md → "Automated builds (CI)" for the how):
+#
+#   Secrets:
+#     ANDROID_KEYSTORE_BASE64     base64 of anchor-alarm-upload.jks
+#     ANDROID_KEYSTORE_PASSWORD   the store password
+#     ANDROID_KEY_PASSWORD        the key password
+#     FIREBASE_SERVICE_ACCOUNT    JSON for a service account with the
+#                                 "Firebase App Distribution Admin" role
+#   Variables (not secret — the App ID is already in DISTRIBUTION.md):
+#     FIREBASE_APP_ID             e.g. 1:661000526462:android:21bd…
+#     ANDROID_KEY_ALIAS           anchor-alarm-upload   (optional; defaults to this)
+#     FIREBASE_GROUPS             crew                  (optional; defaults to crew)
+#
+# Until these exist the job fails fast at the "check secrets" step with a
+# message saying what is missing — it never ships an unsigned or half-built
+# APK.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'anchor-alarm-frontend/**'
+      - 'anchor-alarm-backend/**'
+      - '.github/workflows/android-release.yml'
+  workflow_dispatch:
+    inputs:
+      releaseNotes:
+        description: 'Release notes shown to testers'
+        required: false
+        default: ''
+
+# One release at a time, and never cancel a build that is already uploading.
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-distribute:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: anchor-alarm-frontend
+    steps:
+      - name: Check out (full history for versionCode)
+        uses: actions/checkout@v4
+        with:
+          # versionCode is `git rev-list --count HEAD`; a shallow clone would
+          # under-count it and Firebase would reject a stale code.
+          fetch-depth: 0
+
+      - name: Fail early if required secrets are missing
+        working-directory: .
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KSPW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KPW: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APPID: ${{ vars.FIREBASE_APP_ID }}
+        run: |
+          missing=""
+          [ -z "$KS" ]    && missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -z "$KSPW" ]  && missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -z "$KPW" ]   && missing="$missing ANDROID_KEY_PASSWORD"
+          [ -z "$SA" ]    && missing="$missing FIREBASE_SERVICE_ACCOUNT(secret)"
+          [ -z "$APPID" ] && missing="$missing FIREBASE_APP_ID(variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required config:$missing — see .github/workflows/android-release.yml and DISTRIBUTION.md"
+            exit 1
+          fi
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: anchor-alarm-frontend/package-lock.json
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend tests
+        run: npm test
+        env:
+          CI: true
+
+      - name: Backend tests (the alarm relay must be green before shipping)
+        working-directory: anchor-alarm-backend
+        run: |
+          npm ci
+          npm test
+
+      - name: Restore the signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
+        run: |
+          KEYSTORE_PATH="$RUNNER_TEMP/anchor-alarm-upload.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          # build.gradle reads android/keystore.properties; forward slashes
+          # only (a backslash is an escape in a .properties file).
+          cat > android/keystore.properties <<EOF
+          storeFile=${KEYSTORE_PATH}
+          storePassword=${ANDROID_KEYSTORE_PASSWORD}
+          keyAlias=${ANDROID_KEY_ALIAS:-anchor-alarm-upload}
+          keyPassword=${ANDROID_KEY_PASSWORD}
+          EOF
+          chmod +x android/gradlew
+
+      - name: Build the signed release APK
+        run: npm run release:android
+
+      - name: Verify the APK is signed with the expected key
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK" || { echo "::error::no APK at $APK"; exit 1; }
+          echo "Built: $APK"
+
+      - name: Upload the APK as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: anchor-alarm-frontend/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Distribute to Firebase App Distribution
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ vars.FIREBASE_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: ${{ vars.FIREBASE_GROUPS || 'crew' }}
+          file: anchor-alarm-frontend/android/app/build/outputs/apk/release/app-release.apk
+          releaseNotes: ${{ github.event.inputs.releaseNotes || github.event.head_commit.message }}
+
+      - name: Always remove the keystore from the runner
+        if: always()
+        run: rm -f android/keystore.properties "$RUNNER_TEMP/anchor-alarm-upload.jks"

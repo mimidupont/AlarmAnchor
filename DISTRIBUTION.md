@@ -260,6 +260,49 @@ Expected, not worth chasing: `flatDir` notices from Capacitor's generated Gradle
 files, source/target 8 deprecation from `@capacitor-community/background-geolocation`,
 and deprecated-API notes from `local-notifications`.
 
+## Automated builds (CI)
+
+`.github/workflows/android-release.yml` runs the same pipeline on a GitHub
+runner, so a build reaches testers **without anyone running a command**. It
+fires on every push to `main` that touches app code, and on demand from the
+repo's **Actions → Android release → Firebase → Run workflow** (where you can
+type release notes). It runs both test suites, builds the signed APK, uploads
+it as a workflow artifact, and distributes it to the `crew` group.
+
+It cannot sign or upload without credentials, which never live in the repo.
+Add them once under **Settings → Secrets and variables → Actions**:
+
+**Secrets**
+
+| Name | How to produce it |
+| :--- | :--- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 anchor-alarm-upload.jks` (macOS: `base64 -i …`; Windows PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("anchor-alarm-upload.jks"))`) |
+| `ANDROID_KEYSTORE_PASSWORD` | the store password |
+| `ANDROID_KEY_PASSWORD` | the key password |
+| `FIREBASE_SERVICE_ACCOUNT` | JSON for a service account with the **Firebase App Distribution Admin** role — Google Cloud console → IAM & Admin → Service Accounts → create key (JSON), paste the whole file |
+
+**Variables** (not secret)
+
+| Name | Value |
+| :--- | :--- |
+| `FIREBASE_APP_ID` | `1:661000526462:android:21bd203bee54816824d62f` |
+| `ANDROID_KEY_ALIAS` | `anchor-alarm-upload` (optional; this is the default) |
+| `FIREBASE_GROUPS` | `crew` (optional; this is the default) |
+
+Until all four secrets and `FIREBASE_APP_ID` exist, the job stops at its first
+step with a message naming what is missing — it never ships an unsigned or
+half-built APK. The runner writes the keystore and `keystore.properties` from
+the secrets for the build and deletes both afterward.
+
+> Two caveats carried over from the manual flow. **`versionCode`** is still
+> `git rev-list --count HEAD`, so CI checks out full history and every commit
+> yields a unique code — but **`versionName`** is still manual in
+> `android/app/build.gradle` and `src/version.js`: bump it (and commit)
+> whenever a build is meaningfully different, or two CI builds both show as
+> the same name. And the **signing key is the same reference key** — verify a
+> CI-built APK's SHA-256 against the value above once, to be sure the secret
+> holds the right keystore.
+
 ## What testers do
 
 1. Accept the email invite, signing in with that Google account.
